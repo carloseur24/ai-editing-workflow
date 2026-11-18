@@ -88,6 +88,7 @@ def measure(music: Path, config_bpm: float | None = None) -> dict:
         nominal = 60.0 / float(config_bpm)
         grid["config_bpm"] = float(config_bpm)
         grid["config_beat_sec"] = round(nominal, 4)
+        grid["bpm_drift_pct"] = bpm_drift_pct(bpm, float(config_bpm))
         # How far a cut laid on the NOMINAL grid lands from the real beat,
         # measured at the end of the first 28 s (the delivery length) and at
         # the end of the track.
@@ -96,6 +97,40 @@ def measure(music: Path, config_bpm: float | None = None) -> dict:
         grid["drift_ms_per_sec"] = round(
             (nominal - beat_sec) / nominal * 1000.0, 2)
     return grid
+
+
+def bpm_drift_pct(measured: float, requested: float) -> float | None:
+    """Absolute tempo drift in percent of the requested BPM (None if invalid)."""
+    try:
+        measured, requested = float(measured), float(requested)
+    except (TypeError, ValueError):
+        return None
+    if requested <= 0:
+        return None
+    return round(abs(measured - requested) / requested * 100.0, 3)
+
+
+def bpm_warning(grid: dict, tolerance: float = 1.5) -> str | None:
+    """A warning when the measured tempo drifts past ``tolerance`` percent.
+
+    This is the guard for a mislabelled bed: the planner always snaps to the
+    *measured* grid, so a config BPM that is 2 % off silently changes every cut
+    length. Printing requested vs measured makes the mismatch visible without a
+    stretch/fit pass.
+    """
+    measured = grid.get("bpm")
+    requested = grid.get("config_bpm")
+    if measured is None or requested is None:
+        return None
+    drift = grid.get("bpm_drift_pct")
+    if drift is None:
+        drift = bpm_drift_pct(measured, requested)
+    if drift is None or float(drift) <= float(tolerance):
+        return None
+    return (f"measured {float(measured):.2f} BPM vs requested "
+            f"{float(requested):.1f} BPM ({float(drift):.2f}% drift, "
+            f"tolerance {float(tolerance):.2f}%); cuts snap to the measured "
+            f"grid, so update music.bpm or the bed file")
 
 
 def _nominal_drift(beats: list[float], nominal: float, target: float) -> float:
@@ -129,6 +164,8 @@ def cached_measure(music: Path, config_bpm: float | None = None,
             if data.get("sha256") == file_sha256(music):
                 if config_bpm:
                     data["config_bpm"] = float(config_bpm)
+                    data["bpm_drift_pct"] = bpm_drift_pct(
+                        data.get("bpm"), float(config_bpm))
                 return data
         except json.JSONDecodeError:
             pass
@@ -174,7 +211,8 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--print", action="store_true", help="print the JSON")
     args = parser.parse_args(argv)
 
-    cfg = load_config(args.config)
+    sku_dir = resolve_sku_dir(args.sku_dir) if args.sku_dir else None
+    cfg = load_config(args.config, project=sku_dir)
     nominal_bpm = cfg.get("music", {}).get("bpm") or cfg.get("bpm")
     music = args.music
     if music is None:
@@ -187,15 +225,24 @@ def main(argv: list[str] | None = None) -> None:
         music = pool[0]
 
     grid = cached_measure(music, config_bpm=nominal_bpm, force=args.force)
+    tol = float((cfg.get("quality") or {}).get("bpm_tolerance", 1.5))
+    warning = bpm_warning(grid, tol)
     if args.sku_dir:
         sku_dir = resolve_sku_dir(args.sku_dir)
         out = write_grid(sku_dir, grid)
-        print(f"[beats] {grid['bpm']:.2f} BPM "
+        print(f"[beats] measured {grid['bpm']:.2f} BPM "
               f"(beat {grid['beat_sec']:.4f}s ± {grid['beat_sec_stdev']:.4f}), "
               f"offset {grid['offset']:.3f}s, {len(grid['beats'])} beats")
+        if "config_bpm" in grid:
+            print(f"[beats] requested {grid['config_bpm']:.2f} BPM -> "
+                  f"measured {grid['bpm']:.2f} BPM "
+                  f"({grid.get('bpm_drift_pct', 0.0):+.2f}% drift, "
+                  f"tolerance {tol:.2f}%)")
+        if warning:
+            print(f"[beats] WARNING: {warning}")
         if "drift_ms_at_end" in grid:
-            print(f"[beats] config says {grid['config_bpm']:.1f} BPM -> "
-                  f"{grid['drift_ms_at_end']:.0f} ms drift by the last beat")
+            print(f"[beats] nominal grid vs real beats: "
+                  f"{grid['drift_ms_at_end']:.0f} ms by the last beat")
         print(f"[beats] wrote {out}")
     if args.print or not args.sku_dir:
         print(json.dumps(grid, ensure_ascii=False, indent=2))
