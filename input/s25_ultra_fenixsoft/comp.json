@@ -1,0 +1,20 @@
+{
+  "base": "output/s25_ultra_fenixsoft/s25_ultra_fenixsoft_20261117-223646/s25_ultra_fenixsoft_20261117-223646_final.mp4",
+  "width": 1080,
+  "height": 1920,
+  "fps": 60,
+  "duration": 33.0,
+  "layers": [
+    {
+      "src": "output/s25_ultra_fenixsoft/motion/s25_ultra_fenixsoft_20261117-223029/plate.mov",
+      "start": 0.0,
+      "end": 33.0,
+      "x": 0.5,
+      "y": 0.5,
+      "scale": 1.0,
+      "opacity": 1.0
+    }
+  ],
+  "fade_in": 0.35,
+  "fade_out": 1.3
+}
