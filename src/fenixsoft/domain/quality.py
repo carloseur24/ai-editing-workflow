@@ -38,6 +38,17 @@ def _gray(frame: np.ndarray, size: int | None = None) -> np.ndarray:
     return gray
 
 
+def probe_duration(path: Path) -> float:
+    """Container duration in seconds (header read, no full decode)."""
+    cap = cv2.VideoCapture(str(path))
+    try:
+        fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
+        frames = cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0.0
+        return float(frames / fps) if fps else 0.0
+    finally:
+        cap.release()
+
+
 def frame_sharpness(path: Path, t: float) -> float:
     cap = cv2.VideoCapture(str(path))
     try:
@@ -213,3 +224,23 @@ def frame_similarity(a: np.ndarray, b: np.ndarray) -> dict:
     else:
         corr = float(np.corrcoef(af.ravel(), bf.ravel())[0, 1])
     return {"mad": round(mad, 4), "corr": round(corr, 4)}
+
+
+# ------------------------------------------------------------------ beat policy
+BEAT_POLICIES = ("music", "picture")
+
+
+def beat_policy(cfg: dict | None) -> str:
+    """``quality.beat_policy``: ``music`` (default) or ``picture``.
+
+    A music-driven cut has to land on the measured grid. A picture-driven piece
+    (cinematic long takes, action cuts, documentary) cuts on the action; its
+    beat offsets are measured and reported as information, never as a failure.
+    """
+    value = str(((cfg or {}).get("quality") or {}).get("beat_policy")
+                or "music").strip().lower()
+    return value if value in BEAT_POLICIES else "music"
+
+
+def picture_driven(cfg: dict | None) -> bool:
+    return beat_policy(cfg) == "picture"
