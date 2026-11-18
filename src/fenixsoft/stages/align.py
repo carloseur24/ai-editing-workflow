@@ -34,6 +34,7 @@ import numpy as np
 from ..context import (DEFAULT_CONFIG, MODELS_DIR, artifact, load_config,
                        resolve_sku_dir)
 from ..domain.narration import build_lines
+from ..domain.voice import explicit_duration, is_music_only, voice_name
 
 SR = 16000
 
@@ -62,6 +63,16 @@ def audio_duration(path: Path) -> float:
         "ffprobe", "-v", "error", "-show_entries", "format=duration",
         "-of", "default=noprint_wrappers=1:nokey=1", str(path),
     ]).decode().strip())
+
+
+def _brief(sku_dir: Path) -> dict:
+    path = sku_dir / "brief.json"
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
 
 
 # ------------------------------------------------------------------- silence
@@ -440,10 +451,18 @@ def main(argv: list[str] | None = None) -> None:
                         help="ignore the cached transcript and re-run ASR")
     args = parser.parse_args(argv)
 
-    cfg = load_config(args.config)
     sku_dir: Path = resolve_sku_dir(args.sku_dir)
+    cfg = load_config(args.config, project=sku_dir)
     sku = json.loads((sku_dir / "sku.json").read_text(encoding="utf-8"))
-    voice_in = sku_dir / sku.get("voiceover", "voice.mp3")
+    if is_music_only(sku):
+        duration = explicit_duration(sku, _brief(sku_dir), cfg)
+        print("[align] music-only project (voiceover: "
+              f"{sku.get('voiceover')!r}): nothing to align.")
+        print(f"[align] duration comes from sku/brief duration_sec = "
+              f"{duration:.2f}s; captions stay off.")
+        print("[align] next: ./fenix plan <project> (locked by brief.story.shots)")
+        return
+    voice_in = sku_dir / voice_name(sku)
     if not voice_in.exists():
         sys.exit(f"[ERROR] Missing voiceover: {voice_in}")
 
