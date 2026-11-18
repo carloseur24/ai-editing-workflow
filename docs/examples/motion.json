@@ -1,0 +1,21 @@
+{
+  "width": 540,
+  "height": 960,
+  "fps": 24,
+  "duration_sec": 1.0,
+  "background": "#101312",
+  "grain": 0.05,
+  "object": {
+    "preset": "brain",
+    "size": 420,
+    "mesh": 180,
+    "raymarch_steps": 16,
+    "center": [0.5, 0.5],
+    "rotate": {"rx": [0, 8], "ry": [-30, 30], "rz": [0, 0]},
+    "light": {"angle": [-60, -90]}
+  },
+  "text": [
+    {"text": "MOTION", "y": 220, "size": 56, "color": "#FFFFFF", "start": 0.1, "end": 0.9}
+  ],
+  "audio": null
+}
