@@ -34,8 +34,15 @@ It returns, in one process and under a second:
 - `mode` — `edit`, `motion`, `hybrid`, `longform`, `post`, `intake` or `new`;
 - `ready` / `missing` — the exact files the job cannot start without;
 - `warnings` — non-blocking gaps (e.g. no `brief.json`);
+- `config` — the project overlay path, whether it exists and how many leaf
+  overrides it applies (the effective values are in `params`);
+- `params` — the effective `duration_sec`, `cuts`, `beat_policy`,
+  `in_point_floor`, `transitions` and text mode after the overlay;
 - `skills` — which skills to load and whether they are installed;
 - `stages` — run/skip + reason for the edit/hybrid chain (empty otherwise);
+- `order` — the ordered shot table: `locked`, `source` (`brief`/`plan`),
+  `manual` (hand-authored cut list), `total_sec`, `shots[]`/`cuts[]`,
+  `order_confirmed` and any failing rows;
 - `render` — `skip`, `remix` or `full` for edit/hybrid; `none` otherwise;
 - `master` — the current run video, when one exists;
 - `next` — the exact command(s), in order;
@@ -62,7 +69,9 @@ project.
 1. `fenix job` lists the skills; load the one for the step with the `skill`
    tool.
 2. Run the stage: `fenix sfx <p>`, `fenix render <p>`, etc.
-3. If a value is wrong, change `config/pipeline.json` or `input/<p>/`, never
+3. If a value is wrong, change `input/<p>/config.json` for a project-only
+   requirement, `config/pipeline.json` for machinery, or `input/<p>/` for the
+   creative facts — never the rendered file. `job` shows the effective values.
    `src/`.
 4. If a capability is genuinely missing, **stop the video job** and open a
    separate repo task ("add X to the renderer"). Do not mix it with the piece.
@@ -141,6 +150,44 @@ forces a fresh gate.
 
 **Acceptance.** One strict QA per master; `finish` prints
 `reusing the strict PASS`.
+
+## Case 4b — a full render to check text placement
+
+**Evidence.** The S25 job spent a 33 s full render (~3 min) to discover a spec
+sat over the settings list; then a 57 s comp to see the plate over the footage.
+
+**Argument.** Placement is a still-frame property. Encoding 1,000 frames cannot
+tell you more about it than one composited frame, and it costs two orders of
+magnitude more.
+
+**Correct move.**
+
+```bash
+./fenix render <p> --preview     # cut midpoints + every card, 3–5 s
+./fenix comp <p> --preview       # layer placement per base cut, <10 s
+```
+
+Both write `output/<p>/preview/…` with a contact sheet and never create a run.
+A card or a shot can name a safe-zone band (`header`/`lower`/`center`) instead
+of a pixel `y`, so the fix is in the spec, not re-measured per render.
+
+**Acceptance.** No full render (edit or comp) for a change that only moves text.
+
+## Case 4c — re-rendering a comp to deliver it again
+
+**Evidence.** `comp --deliver` re-encoded an unchanged 33 s composite because
+`--reuse` had to be remembered.
+
+**Argument.** Delivery is a copy job. The manifest already carries a
+`fingerprint` of the spec plus resolved inputs.
+
+**Correct move.** `fenix comp <p> --deliver` implies `--reuse`; an unchanged
+spec delivers the existing run in ~0.5 s with no ffmpeg. `--force` re-encodes.
+The post-master gate is `fenix qa --post --latest <p>` (or `make --post comp`),
+which writes local evidence and never touches the shelf.
+
+**Acceptance.** No ffmpeg in a repeat delivery; `qa --post` PASS before the
+shelf copy.
 
 ## Case 5 — orchestration turn bloat
 
