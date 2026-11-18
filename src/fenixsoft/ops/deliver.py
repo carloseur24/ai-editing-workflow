@@ -31,10 +31,8 @@ from pathlib import Path
 
 from ..context import DEFAULT_CONFIG, load_config, repo_path
 from ..domain import runs
-
-DEFAULT_COPY = ["*_final.mp4", "contact_sheet.png", "qa_report.json",
-                "caption_audit.json", "edit_plan.json", "word_timings.json",
-                "*.md"]
+from ..domain.voice import is_music_only
+from . import bundle
 
 
 def sha256(path: Path) -> str:
@@ -65,11 +63,6 @@ def resolve_run(target: Path | None, latest: str | None) -> tuple[Path, Path]:
     return run_dir, video
 
 
-def patterns(cfg: dict) -> list[str]:
-    copy = (cfg.get("delivery") or {}).get("copy") or DEFAULT_COPY
-    return [str(p) for p in copy]
-
-
 def delivery_dir(cfg: dict, override: Path | None) -> Path:
     if override:
         return override
@@ -77,11 +70,6 @@ def delivery_dir(cfg: dict, override: Path | None) -> Path:
     if not configured:
         sys.exit("[deliver] no delivery.dir in config/pipeline.json and no --dir")
     return repo_path(configured).expanduser()
-
-
-def downloads_dir(cfg: dict) -> Path | None:
-    configured = (cfg.get("delivery") or {}).get("downloads")
-    return repo_path(configured).expanduser() if configured else None
 
 
 def write_index(root: Path) -> Path:
@@ -126,65 +114,82 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
 
-    cfg = load_config(args.config)
+    run_dir, video = resolve_run(args.run, args.latest)
+    project = args.latest or runs.sku_of_run(run_dir)
+    cfg = load_config(args.config, project=runs.input_dir(project))
     deliv = cfg.get("delivery") or {}
     want_downloads = deliv.get("copy_to_downloads", True) if args.downloads is None \
         else args.downloads
     want_prune = deliv.get("prune_local_media", True) if args.prune is None \
         else args.prune
-
-    run_dir, video = resolve_run(args.run, args.latest)
     target = delivery_dir(cfg, args.dir) / run_dir.name
 
-    files: list[Path] = []
-    for pattern in patterns(cfg):
-        files.extend(sorted(p for p in run_dir.glob(pattern) if p.is_file()))
-    seen: set[Path] = set()
-    files = [p for p in files if not (p in seen or seen.add(p))]
-    if not files:
-        sys.exit(f"[deliver] nothing matched in {run_dir}")
+    # Effective config for the shared planner: --dir / --no-downloads override
+    # without mutating the loaded config, and pipeline.local.json stays applied.
+    eff = dict(cfg)
+    eff_delivery = dict(deliv)
+    eff_delivery["dir"] = str(target.parent)
+    if not want_downloads:
+        eff_delivery["downloads"] = None
+    eff["delivery"] = eff_delivery
 
+    no_voice = False
+    try:
+        sku_data = json.loads((runs.input_dir(project) / "sku.json")
+                              .read_text(encoding="utf-8"))
+        no_voice = is_music_only(sku_data)
+    except (OSError, json.JSONDecodeError):
+        no_voice = False
+
+    plan = bundle.bundle_plan(project, run_dir, eff, master=video)
+    if not plan:
+        sys.exit(f"[deliver] nothing to deliver in {run_dir}")
+    files = [Path(row["src"]) for row in plan if row["kind"] == "shelf"]
     size_mb = sum(p.stat().st_size for p in files) / 1024 / 1024
-    print(f"[deliver] {run_dir.name} -> {target}  ({len(files)} files, "
+    print(f"[deliver] {run_dir.name} -> {target}  ({len(plan)} files, "
           f"{size_mb:.2f} MB)")
     if args.dry_run:
-        for p in files:
-            print(f"  would copy {p.name}")
-        if want_downloads:
-            print(f"  would copy {video.name} + contact sheet to Downloads")
+        for row in plan:
+            print(f"  would copy [{row['kind']}] {Path(row['dest']).name}")
         if want_prune:
             print("  would prune local media after verification")
         return
 
-    try:
-        target.mkdir(parents=True, exist_ok=True)
-        for p in files:
-            shutil.copy2(p, target / p.name)
-            if (target / p.name).stat().st_size != p.stat().st_size:
-                sys.exit(f"[deliver] size mismatch after copying {p.name}")
-            print(f"  copied {p.name}")
-    except OSError as exc:
-        sys.exit(f"[deliver] copy failed: {exc}")
+    # The note is generated from the plan it ships with, so the readme is an
+    # extra row rather than a file the planner had to guess about.
+    readme_path = run_dir / "delivery_readme.md"
+    readme_path.write_text(
+        bundle.write_bundle_readme(project, run_dir, plan, eff,
+                                   no_voice=no_voice),
+        encoding="utf-8")
+    readme_dest = target / readme_path.name
+    if all(Path(row["dest"]) != readme_dest for row in plan):
+        plan.append({"src": readme_path, "dest": readme_dest,
+                     "kind": "shelf"})
+        files.append(readme_path)
+        size_mb = sum(p.stat().st_size for p in files) / 1024 / 1024
 
-    downloads_to = None
-    downloads_files: list[str] = []
-    if want_downloads:
-        dl = downloads_dir(cfg)
-        if dl:
-            dl.mkdir(parents=True, exist_ok=True)
-            dl_video = dl / video.name
-            shutil.copy2(video, dl_video)
-            if sha256(video) != sha256(dl_video):
-                sys.exit(f"[deliver] hash mismatch in {dl_video}")
-            downloads_files.append(dl_video.name)
-            sheet = run_dir / "contact_sheet.png"
-            if sheet.exists():
-                dl_sheet = dl / f"{run_dir.name}_contact_sheet.png"
-                shutil.copy2(sheet, dl_sheet)
-                downloads_files.append(dl_sheet.name)
-            downloads_to = str(dl)
-            print(f"[deliver] downloads: {dl_video}")
-            print(f"[deliver] downloads: {dl / (run_dir.name + '_contact_sheet.png')}")
+    result = bundle.apply_bundle(plan)
+    for warning in result["skipped"]:
+        print(f"[deliver] WARNING: missing source skipped: {warning}")
+
+    # Verify before pruning: size for every file, sha256 for flat Downloads.
+    for row in plan:
+        src, dest = Path(row["src"]), Path(row["dest"])
+        if not dest.exists():
+            sys.exit(f"[deliver] missing after copy: {dest}")
+        if dest.stat().st_size != src.stat().st_size:
+            sys.exit(f"[deliver] size mismatch after copying {dest.name}")
+        if row["kind"] == "downloads" and sha256(src) != sha256(dest):
+            sys.exit(f"[deliver] hash mismatch in {dest}")
+        print(f"  copied [{row['kind']}] {dest.name}")
+
+    downloads = [row for row in plan if row["kind"] == "downloads"]
+    downloads_to = (str(Path(downloads[0]["dest"]).parent)
+                    if downloads else None)
+    downloads_files = [Path(row["dest"]).name for row in downloads]
+    for row in downloads:
+        print(f"[deliver] downloads: {row['dest']}")
 
     freed_mb = 0.0
     pruned = False
@@ -207,6 +212,8 @@ def main(argv: list[str] | None = None) -> None:
         "delivered_to": str(target),
         "delivered_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "files": [p.name for p in files],
+        "copied": result["copied"],
+        "skipped": result["skipped"],
         "size_mb": round(size_mb, 3),
         "downloads_to": downloads_to,
         "downloads_files": downloads_files,
@@ -216,7 +223,7 @@ def main(argv: list[str] | None = None) -> None:
     }
     (run_dir / "delivery.json").write_text(
         json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
-    runs.register_run(runs.sku_of_run(run_dir), run_dir,
+    runs.register_run(project, run_dir,
                       windows_video if pruned else video,
                       metrics={"delivered_to": str(target),
                                "downloads_to": downloads_to,
