@@ -31,10 +31,42 @@ from pathlib import Path
 
 import numpy as np
 
-from ..context import DEFAULT_CONFIG, load_config
+from ..context import DEFAULT_CONFIG, REPO_ROOT, load_config
 from ..domain import runs
 from ..domain.quality import (ensure_normalized_clip, frame_crop_gray,
-                              frame_similarity, normalized_clip_path)
+                              frame_similarity, normalized_clip_path,
+                              picture_driven)
+from ..domain.voice import explicit_duration, is_music_only
+
+# Rows that only make sense when a voiceover exists. A music-only master is
+# still checked for duration, loudness, peak, black frames, size and shot
+# identity; there is simply no script, transcript or caption stream to judge.
+VO_CHECK_IDS = {
+    "c_timings", "d_script_match", "d_tail_complete",
+    "c_cps_max", "c_cps_fail", "c_caption_text", "c_caption_zone",
+    "c_caption_dupes", "c_caption_audit",
+}
+
+
+def strip_vo_checks(checks: list[dict], music_only: bool
+                    ) -> tuple[list[dict], list[str]]:
+    """Drop voice/caption rows for a music-only piece, append one note row."""
+    if not music_only:
+        return checks, []
+    kept, skipped = [], []
+    for check in checks:
+        if check["id"] in VO_CHECK_IDS:
+            skipped.append(check["id"])
+        else:
+            kept.append(check)
+    kept.append({
+        "id": "a_music_only", "check": "a_music_only",
+        "measured": f"{len(skipped)} VO/script/caption gate(s) skipped",
+        "threshold": "music-only piece: no voiceover to check",
+        "ok": True, "detail": "music-only: no voiceover",
+        "severity": "warn", "fix": "",
+    })
+    return kept, skipped
 
 
 def probe(path: Path) -> dict:
@@ -129,6 +161,232 @@ def _pill_rgb(video: Path, box: list[int]) -> tuple[int, int, int] | None:
     return tuple(int(v) for v in np.median(px, axis=0))
 
 
+def _media_ref(value, sku: str) -> Path | None:
+    """Resolve a comp spec path: repo-relative, absolute or a stable ref."""
+    if not value:
+        return None
+    raw = str(value)
+    if runs.is_stable_ref(raw):
+        resolved = runs.resolve_stable_ref(raw, sku)
+        return Path(resolved) if resolved else None
+    path = Path(raw).expanduser()
+    return path if path.is_absolute() else REPO_ROOT / path
+
+
+def _read_json(path: Path) -> dict:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def post_report(video: Path, cfg: dict, *, strict: bool = False) -> dict:
+    """Post-master profile: a comp/fx/grade master, not the 30-check edit gate.
+
+    The edit gate judges the cut list, the voiceover and the captions; a
+    post-master no longer has those inputs (the base is an encoded run). This
+    profile checks what can still be wrong after a composite: container,
+    duration, loudness/peak, black frames, byte budget and whether each base cut
+    still shows the same picture.
+    """
+    sku_name, _sku_dir = runs.resolve_for_video(video)
+    run_dir = video.parent
+    comp_spec = _read_json(run_dir / "comp.json")
+    manifest = _read_json(run_dir / "manifest.json")
+    data = probe(video)
+    streams = {s["codec_type"]: s for s in data.get("streams", [])}
+    v, a = streams.get("video", {}), streams.get("audio", {})
+    fmt = data.get("format", {})
+    num, _, den = str(v.get("r_frame_rate", "0/1")).partition("/")
+    fps = float(num) / float(den or 1)
+    duration = float(fmt.get("duration") or 0)
+    size = int(fmt.get("size") or 0)
+
+    canvas = cfg.get("canvas") or {}
+    want_w = int(comp_spec.get("width") or canvas.get("width") or 1080)
+    want_h = int(comp_spec.get("height") or canvas.get("height") or 1920)
+    want_fps = float(comp_spec.get("fps") or canvas.get("fps") or 60)
+    max_bytes = int((cfg.get("encoding") or {}).get("max_whatsapp_bytes",
+                                                     16252928))
+    target_lufs = float((cfg.get("audio") or {}).get("target_lufs", -14.0))
+
+    checks: list[dict] = []
+
+    def check(cid: str, ok: bool, measured, threshold, fix: str = "",
+              severity: str = "error") -> None:
+        checks.append({"id": cid, "check": cid, "measured": measured,
+                       "threshold": threshold, "ok": bool(ok),
+                       "detail": str(measured), "severity": severity,
+                       "fix": fix})
+
+    check("pm_manifest", bool(manifest),
+          f"{manifest.get('layers', '?')} layer(s), "
+          f"{manifest.get('duration_sec', '?')}s" if manifest
+          else "missing manifest.json",
+          "comp run manifest present", "run fenix comp so the run carries its "
+          "executed spec and layer count", "warn")
+    check("v_codec", v.get("codec_name") == "h264", str(v.get("codec_name")),
+          "h264", "re-encode with the shared encoding block")
+    check("v_resolution", (v.get("width"), v.get("height")) == (want_w, want_h),
+          f"{v.get('width')}x{v.get('height')}", f"{want_w}x{want_h}",
+          "render at the project canvas; a post master must not change size")
+    check("v_fps", abs(fps - want_fps) < 0.01, f"{fps:.2f}", f"{want_fps:.0f}",
+          "re-encode with the project fps")
+    check("v_pix_fmt", v.get("pix_fmt") == "yuv420p", str(v.get("pix_fmt")),
+          "yuv420p", "WhatsApp/Reels need 4:2:0")
+    check("v_profile", str(v.get("profile", "")).lower() == "main",
+          str(v.get("profile")), "main", "set encoding.profile = main")
+    check("v_level", str(v.get("level")) == "42", f"level={v.get('level')}",
+          "4.2 (level 42)", "set encoding.level = 4.2")
+    check("v_faststart", has_faststart(video), "moov before mdat", "faststart",
+          "add -movflags +faststart")
+    check("v_size_budget", size <= max_bytes,
+          f"{size / 1024 / 1024:.2f} MB",
+          f"<= {max_bytes / 1024 / 1024:.1f} MB",
+          "re-encode at CRF 21 / 2.5 Mbps")
+
+    expected = comp_spec.get("duration")
+    base = _media_ref(comp_spec.get("base"), sku_name)
+    base_plan = _read_json(base.parent / "edit_plan.json") if base else {}
+    base_cuts = [c for c in (base_plan.get("cuts") or [])
+                 if c.get("dur") is not None and c.get("t0") is not None]
+    if expected is None and base_plan.get("duration_sec"):
+        expected = base_plan.get("duration_sec")
+    if expected is not None:
+        check("pm_duration", abs(duration - float(expected)) < 0.35,
+              f"{duration:.2f}s master / {float(expected):.2f}s spec",
+              "within 0.35s", "re-run comp: the graph trimmed a different "
+              "duration than the spec")
+    check("q_run_versioned",
+          bool(runs.RUN_RE.match(run_dir.name)) and video.suffix == ".mp4",
+          f"{run_dir.name}/{video.name}", "<sku>_<YYYYmmdd-HHMMSS>/<stage>.mp4",
+          "run the stage without --out so the result lands in its own run",
+          "warn")
+    check("pm_base", bool(base_cuts) or base is None,
+          f"{len(base_cuts)} base cut(s)" if base_cuts
+          else ("no base plan: identity compared on samples"
+                if base else "base missing"),
+          "base edit_plan.json readable", "point comp.json at @render/latest "
+          "(or a run with edit_plan.json) so cut identity can be measured",
+          "info")
+
+    check("a_stream", bool(a) and a.get("codec_name") == "aac",
+          f"{a.get('codec_name')} {a.get('sample_rate')} Hz {a.get('channels')} ch",
+          "aac 48 kHz stereo", "set encoding.audio_codec = aac")
+    lufs, tp, pcm = audio_metrics(video)
+    check("a_lufs", abs(lufs - target_lufs) <= 1.0, f"{lufs:.2f} LUFS",
+          f"{target_lufs:+.1f} +/- 1.0",
+          "the base mix was re-encoded: check the comp audio args")
+    check("a_true_peak", tp <= -1.0, f"{tp:.2f} dBTP", "<= -1.0 dBTP",
+          "lower audio.limiter_ceiling in config/pipeline.json")
+    clipped = int((np.abs(pcm) >= 0.999).sum())
+    check("a_clipping", clipped == 0, f"{clipped} full-scale samples",
+          "0", "reduce the master gain or the limiter ceiling")
+
+    sample_ts = [duration * f for f in (0.02, 0.15, 0.3, 0.45, 0.6, 0.75, 0.9)]
+    lumas = frame_luma(video, sample_ts)
+    darkest = min(lumas) if lumas else 0.0
+    check("v_black_frames", darkest >= 12.0,
+          f"darkest sampled mean luma {darkest:.1f}/255", ">= 12",
+          "the composite is too dark; check the layer opacity/fades")
+
+    if base is not None and base.exists():
+        if base_cuts:
+            points = [(i, float(c["t0"]) + float(c["dur"]) / 2.0)
+                      for i, c in enumerate(base_cuts)]
+        else:
+            points = [(i, duration * (i + 0.5) / 5.0) for i in range(5)]
+
+        def _compare(item):
+            index, t_mid = item
+            a_crop = frame_crop_gray(video, t_mid)
+            b_crop = frame_crop_gray(base, t_mid)
+            if a_crop is None or b_crop is None:
+                return None
+            sim = frame_similarity(a_crop, b_crop)
+            return index, sim["corr"], sim["mad"]
+
+        with ThreadPoolExecutor(max_workers=min(4, len(points))) as pool:
+            results = [r for r in pool.map(_compare, points) if r is not None]
+        if results:
+            corrs = [r[1] for r in results]
+            worst = min(corrs)
+            label = "cut identity" if base_cuts else "sample identity"
+            check("pm_cut_identity", worst >= 0.75,
+                  f"{label}: min corr {worst:.2f} / mean "
+                  f"{sum(corrs) / len(corrs):.2f} over {len(results)} frames",
+                  "corr >= 0.75 (a layer must not replace the base shot)",
+                  "a layer covers the base picture or the base changed; check "
+                  "comp.json layers and the base ref")
+            check("pm_cut_fidelity", worst >= 0.90,
+                  f"{label}: min corr {worst:.2f}",
+                  "corr >= 0.90 (the composite keeps the base picture)",
+                  "inspect the layer opacity/key/mask; the base frame should "
+                  "still dominate outside the layer", "warn")
+        else:
+            check("pm_cut_identity", False,
+                  "no frames could be compared", "every base cut compared",
+                  "the base video is unreadable; re-run comp", "warn")
+
+    errors = [c for c in checks if not c["ok"] and c["severity"] == "error"]
+    warns = [c for c in checks if not c["ok"] and c["severity"] == "warn"]
+    passed = not errors and (not warns or not strict)
+    stat = video.stat()
+    return {
+        "video": str(video),
+        "sku": sku_name,
+        "run": run_dir.name,
+        "profile": "post",
+        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "duration_sec": round(duration, 3),
+        "size_mb": round(size / 1024 / 1024, 3),
+        "video_bytes": stat.st_size,
+        "video_mtime_ns": stat.st_mtime_ns,
+        "base": str(base) if base else None,
+        "layers": manifest.get("layers"),
+        "strict": strict,
+        "pass": passed,
+        "errors": len(errors),
+        "warnings": len(warns),
+        "checks": [{k: c[k] for k in ("id", "measured", "threshold", "ok",
+                                      "severity", "fix")} for c in checks],
+    }
+
+
+def _print_report(report: dict, report_path: Path) -> None:
+    checks = report["checks"]
+    width = max(len(c["id"]) for c in checks) + 2
+    for c in checks:
+        mark = "PASS" if c["ok"] else ("FAIL" if c["severity"] == "error"
+                                       else ("INFO" if c["severity"] == "info"
+                                             else "WARN"))
+        print(f"[{mark}] {c['id']:<{width}} {c['measured']}")
+        if not c["ok"] and c["fix"]:
+            print(f"        fix: {c['fix']}")
+    print(f"\n{'RESULT: PASS' if report['pass'] else 'RESULT: FAIL'} "
+          f"({len(checks) - report['errors'] - report['warnings']}/"
+          f"{len(checks)} checks, {report['errors']} error(s), "
+          f"{report['warnings']} warning(s))")
+    if report.get("strict") and report["warnings"] and not report["errors"]:
+        print("[qa] strict: warnings are failures in delivery mode")
+    print(f"[qa] wrote {report_path}")
+
+
+def _effective_config(video: Path, config_path: Path) -> dict:
+    """Effective config for the project a video belongs to (overlay included).
+
+    QA is often handed a bare path or ``--latest``; both resolve back to
+    ``input/<project>/`` when possible so the checks use the piece's intent.
+    """
+    try:
+        _, project = runs.resolve_for_video(video)
+        if project.is_dir():
+            return load_config(config_path, project=project)
+    except Exception:                              # a foreign/moved master
+        pass
+    return load_config(config_path) if config_path.exists() else {}
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("video", type=Path, nargs="?")
@@ -140,7 +398,37 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--strict", action="store_true",
                         help="warnings fail too (delivery mode)")
     parser.add_argument("--json", action="store_true")
+    parser.add_argument("--post", action="store_true",
+                        help="post-master profile: QA a comp/fx/grade run "
+                             "(container, duration, audio, black frames, size, "
+                             "cut identity) instead of the edit cut list")
     args = parser.parse_args(argv)
+
+    if args.post:
+        if args.latest:
+            video = runs.resolve_stable_ref("@comp/latest", args.latest)
+            if not video:
+                sys.exit(f"[qa] no comp run for {args.latest}; run fenix comp")
+            video = Path(video)
+        elif args.video:
+            video = args.video
+            if video.is_dir():
+                video = runs.run_video(video)
+        else:
+            parser.error("--post needs a comp run directory or --latest <sku>")
+        if not video.exists():
+            sys.exit(f"[qa] missing {video}")
+        cfg = _effective_config(video, args.config)
+        report = post_report(video, cfg, strict=args.strict)
+        report_path = runs.evidence_path(video, cfg)
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(
+            json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        if args.json:
+            print(json.dumps(report, indent=2))
+        else:
+            _print_report(report, report_path)
+        sys.exit(0 if report["pass"] else 1)
 
     if args.latest:
         latest = runs.latest_run(args.latest)
@@ -156,7 +444,7 @@ def main(argv: list[str] | None = None) -> None:
 
     cfg: dict = {}
     if args.config.exists():
-        cfg = load_config(args.config)
+        cfg = _effective_config(video, args.config)
     q = {"in_point_floor": 0.60, "beat_offset_warn_ms": 60.0,
          "beat_offset_fail_ms": 120.0, "caption_warn_cps": 20.0,
          "caption_fail_cps": 25.0, "max_duration_sec": 28.5}
@@ -217,6 +505,18 @@ def main(argv: list[str] | None = None) -> None:
         except json.JSONDecodeError:
             sku_info = {}
     allowed_fast = bool(sku_info.get("allow_fast_captions"))
+    # A music-only run records the flag in its own plan; prefer that over the
+    # current sku.json so an immutable run stays reproducible after the copy or
+    # the voiceover setting changes.
+    run_music_only = False
+    run_plan_path = video.parent / "edit_plan.json"
+    if run_plan_path.exists():
+        try:
+            run_music_only = bool(json.loads(
+                run_plan_path.read_text(encoding="utf-8")).get("music_only"))
+        except json.JSONDecodeError:
+            run_music_only = False
+    music_only = run_music_only or is_music_only(sku_info)
     # Prefer the run's own snapshot so an immutable run stays reproducible
     # after the SKU's voiceover is replaced.
     timings = video.parent / "word_timings.json"
@@ -230,7 +530,16 @@ def main(argv: list[str] | None = None) -> None:
                              .get("duration_sec") or 0) or None
         except json.JSONDecodeError:
             expected = None
-    if timings.exists():
+    if music_only and expected is None:
+        brief: dict = {}
+        brief_path = sku_dir / "brief.json"
+        if brief_path.exists():
+            try:
+                brief = json.loads(brief_path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                brief = {}
+        expected = explicit_duration(sku_info, brief, cfg)
+    if timings.exists() and not music_only:
         tdata = json.loads(timings.read_text(encoding="utf-8"))
         expected = expected or float(tdata.get("duration_sec") or 0)
         check("c_timings", bool(tdata.get("words")), "word timings present",
@@ -249,7 +558,7 @@ def main(argv: list[str] | None = None) -> None:
                   ">= 0.03s (last phrase not clipped)",
                   "the voiceover ends mid-word; re-run fenix align so the "
                   "tail cut lands on silence, or re-record the line")
-    else:
+    elif not music_only:
         check("c_timings", False, f"missing {timings}", "word_timings.json",
               "run fenix align <sku>")
     check("q_run_versioned",
@@ -260,10 +569,14 @@ def main(argv: list[str] | None = None) -> None:
           "render without --out so each result lands in its own timestamped run "
           "directory and older outputs are never overwritten", "warn")
     if expected:
+        duration_label = "plan" if music_only else "VO"
         check("d_matches_vo", abs(duration - expected) < 0.35,
-              f"{duration:.2f}s video / {expected:.2f}s VO", "within 0.35s",
+              f"{duration:.2f}s video / {expected:.2f}s {duration_label}",
+              "within 0.35s",
               "the video must follow the voiceover; re-render after changing "
-              "the script")
+              "the script" if not music_only else
+              "the video must match the plan duration_sec; re-render after "
+              "changing the brief/shot table")
     max_extra = float((cfg.get("voiceover") or {}).get("max_extra_sec", 0.0))
     max_dur = max(float(q["max_duration_sec"]),
                   float(cfg.get("target_duration_sec", 28.0)) + max_extra)
@@ -331,15 +644,27 @@ def main(argv: list[str] | None = None) -> None:
                 if c.get("beat_offset_ms") is not None]
         if offs:
             worst = max(offs)
-            check("p_beat_offset", worst <= float(q["beat_offset_warn_ms"]),
-                  f"max {worst:.0f} ms / mean {sum(offs)/len(offs):.0f} ms",
-                  f"<= {q['beat_offset_warn_ms']:.0f} ms",
-                  f"cuts drift off the measured grid; snap to "
-                  f"output/{video.parent.name}/beat_grid.json", "warn")
-            check("p_beat_hard", worst <= float(q["beat_offset_fail_ms"]),
-                  f"max {worst:.0f} ms",
-                  f"<= {q['beat_offset_fail_ms']:.0f} ms",
-                  "regenerate the cut list on the measured beat grid")
+            picture_policy = picture_driven({"quality": q})
+            if picture_policy:
+                # A picture-driven piece cuts on action, not on the grid; the
+                # measured offsets stay in the report as information.
+                check("p_beat_offset", True,
+                      f"max {worst:.0f} ms / mean {sum(offs)/len(offs):.0f} ms "
+                      f"(picture-driven: informational)",
+                      "quality.beat_policy = picture", "", "info")
+                check("p_beat_hard", True, f"max {worst:.0f} ms "
+                      f"(picture-driven: informational)",
+                      "quality.beat_policy = picture", "", "info")
+            else:
+                check("p_beat_offset", worst <= float(q["beat_offset_warn_ms"]),
+                      f"max {worst:.0f} ms / mean {sum(offs)/len(offs):.0f} ms",
+                      f"<= {q['beat_offset_warn_ms']:.0f} ms",
+                      f"cuts drift off the measured grid; snap to "
+                      f"output/{video.parent.name}/beat_grid.json", "warn")
+                check("p_beat_hard", worst <= float(q["beat_offset_fail_ms"]),
+                      f"max {worst:.0f} ms",
+                      f"<= {q['beat_offset_fail_ms']:.0f} ms",
+                      "regenerate the cut list on the measured beat grid")
     # a render-time warning is re-judged against the current sku.json: the
     # fast-caption one must not fail QA when the ship was opted into
     for w in plan.get("warnings", []):
@@ -415,56 +740,59 @@ def main(argv: list[str] | None = None) -> None:
     audit_path = video.parent / "caption_audit.json"
     if audit_path.exists():
         audit = json.loads(audit_path.read_text(encoding="utf-8"))
-        check("c_cps_max",
-              audit["max_cps"] <= float(q["caption_warn_cps"]) or allowed_fast,
-              f"{audit['max_cps']:.1f} CPS max / {audit['mean_cps']:.1f} mean"
-              + (" (allow_fast_captions)" if allowed_fast else ""),
-              f"<= {q['caption_warn_cps']:.0f} CPS",
-              f"{audit['cards_over_warn']} of {len(audit['cards'])} cards are "
-              f"too fast; shorten the script or merge cards", "warn")
-        check("c_cps_fail",
-              audit["max_cps"] <= float(q["caption_fail_cps"]) or allowed_fast,
-              f"{audit['max_cps']:.1f} CPS max"
-              + (" (allow_fast_captions)" if allowed_fast else ""),
-              f"<= {q['caption_fail_cps']:.0f} CPS"
-              + (" or allow_fast_captions" if allowed_fast else ""),
-              "not readable at 60 fps: shorten the card (caption_audit.json "
-              "lists every card's text and CPS)",
-              "warn" if allowed_fast else "error")
+        if audit.get("disabled"):
+            pass       # music-only render: nothing to judge, rows stripped below
+        else:
+            check("c_cps_max",
+                  audit["max_cps"] <= float(q["caption_warn_cps"]) or allowed_fast,
+                  f"{audit['max_cps']:.1f} CPS max / {audit['mean_cps']:.1f} mean"
+                  + (" (allow_fast_captions)" if allowed_fast else ""),
+                  f"<= {q['caption_warn_cps']:.0f} CPS",
+                  f"{audit['cards_over_warn']} of {len(audit['cards'])} cards are "
+                  f"too fast; shorten the script or merge cards", "warn")
+            check("c_cps_fail",
+                  audit["max_cps"] <= float(q["caption_fail_cps"]) or allowed_fast,
+                  f"{audit['max_cps']:.1f} CPS max"
+                  + (" (allow_fast_captions)" if allowed_fast else ""),
+                  f"<= {q['caption_fail_cps']:.0f} CPS"
+                  + (" or allow_fast_captions" if allowed_fast else ""),
+                  "not readable at 60 fps: shorten the card (caption_audit.json "
+                  "lists every card's text and CPS)",
+                  "warn" if allowed_fast else "error")
 
-        # ---- caption content + safe-zone containment (text, not pixels)
-        kc = cfg.get("kinetic_captions") or {}
-        max_chars = int(kc.get("max_chars_per_chunk", 26))
-        min_px = int((cfg.get("typography") or {}).get("min_size", 24))
-        zone = ((cfg.get("safe_zones") or {}).get(
-            sku_info.get("safe_zone_mode", "reels_universal")) or {})
-        zone_w = int(zone.get("x_max", 950)) - int(zone.get("x_min", 65))
-        cards = audit.get("cards", [])
-        bad_text = [c for c in cards
-                    if not c.get("text", "").strip()
-                    or len(c.get("text", "")) > max_chars + 3
-                    or any(ch in c.get("text", "") for ch in "✓✔☑")]
-        check("c_caption_text", not bad_text,
-              f"{len(cards) - len(bad_text)}/{len(cards)} cards clean",
-              f"non-empty, <= {max_chars + 3} chars, no Unicode checkmarks",
-              "; ".join(f"card {c['index']} {c['text'][:24]!r}"
-                        for c in bad_text[:4]) or "")
-        over = [c for c in cards
-                if c.get("width_px", 0) > zone_w + 2
-                or c.get("font_px", 99) < min_px]
-        check("c_caption_zone", not over,
-              f"{len(cards) - len(over)}/{len(cards)} inside the {zone_w} px zone",
-              f"width <= {zone_w} px, font >= {min_px} px",
-              "; ".join(f"card {c['index']} {c['width_px']} px / "
-                        f"{c['font_px']} px font" for c in over[:4]) or "")
-        if cards:
-            dupes = [b for a, b in zip(cards, cards[1:])
-                     if a["text"].strip() and a["text"] == b["text"]]
-            check("c_caption_dupes", not dupes,
-                  f"{len(dupes)} repeated consecutive cards", "0 repeats",
-                  "two identical cards in a row read as a freeze: merge them",
-                  "warn")
-    else:
+            # ---- caption content + safe-zone containment (text, not pixels)
+            kc = cfg.get("kinetic_captions") or {}
+            max_chars = int(kc.get("max_chars_per_chunk", 26))
+            min_px = int((cfg.get("typography") or {}).get("min_size", 24))
+            zone = ((cfg.get("safe_zones") or {}).get(
+                sku_info.get("safe_zone_mode", "reels_universal")) or {})
+            zone_w = int(zone.get("x_max", 950)) - int(zone.get("x_min", 65))
+            cards = audit.get("cards", [])
+            bad_text = [c for c in cards
+                        if not c.get("text", "").strip()
+                        or len(c.get("text", "")) > max_chars + 3
+                        or any(ch in c.get("text", "") for ch in "✓✔☑")]
+            check("c_caption_text", not bad_text,
+                  f"{len(cards) - len(bad_text)}/{len(cards)} cards clean",
+                  f"non-empty, <= {max_chars + 3} chars, no Unicode checkmarks",
+                  "; ".join(f"card {c['index']} {c['text'][:24]!r}"
+                            for c in bad_text[:4]) or "")
+            over = [c for c in cards
+                    if c.get("width_px", 0) > zone_w + 2
+                    or c.get("font_px", 99) < min_px]
+            check("c_caption_zone", not over,
+                  f"{len(cards) - len(over)}/{len(cards)} inside the {zone_w} px zone",
+                  f"width <= {zone_w} px, font >= {min_px} px",
+                  "; ".join(f"card {c['index']} {c['width_px']} px / "
+                            f"{c['font_px']} px font" for c in over[:4]) or "")
+            if cards:
+                dupes = [b for a, b in zip(cards, cards[1:])
+                         if a["text"].strip() and a["text"] == b["text"]]
+                check("c_caption_dupes", not dupes,
+                      f"{len(dupes)} repeated consecutive cards", "0 repeats",
+                      "two identical cards in a row read as a freeze: merge them",
+                      "warn")
+    elif not music_only:
         check("c_cps_max", False, "missing caption_audit.json",
               "caption audit present", "re-render: fenix render writes it",
               "warn")
@@ -498,6 +826,7 @@ def main(argv: list[str] | None = None) -> None:
                   "composite the overlay in RGB; do not force a second "
                   "colour matrix")
 
+    checks, skipped_vo = strip_vo_checks(checks, music_only)
     errors = [c for c in checks if not c["ok"] and c["severity"] == "error"]
     warns = [c for c in checks if not c["ok"] and c["severity"] == "warn"]
     passed = not errors and (not warns or not args.strict)
@@ -512,15 +841,20 @@ def main(argv: list[str] | None = None) -> None:
         "video_bytes": stat.st_size,
         "video_mtime_ns": stat.st_mtime_ns,
         "strict": args.strict,
+        "music_only": music_only,
+        "skipped_checks": skipped_vo,
         "pass": passed,
         "errors": len(errors),
         "warnings": len(warns),
         "checks": [{k: c[k] for k in ("id", "measured", "threshold", "ok",
                                       "severity", "fix")} for c in checks],
     }
-    report_path = video.parent / "qa_report.json"
+    report_path = runs.evidence_path(video, cfg)
+    report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2),
                            encoding="utf-8")
+    if runs.is_on_delivery_shelf(video, cfg):
+        print(f"[qa] local evidence: {report_path} (delivery shelf untouched)")
     if runs.RUN_RE.match(video.parent.name):
         try:
             runs.register_run(sku_name, video.parent, video, {
@@ -536,19 +870,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.json:
         print(json.dumps(report, indent=2))
     else:
-        width = max(len(c["check"]) for c in checks) + 2
-        for c in checks:
-            mark = "PASS" if c["ok"] else ("FAIL" if c["severity"] == "error"
-                                           else "WARN")
-            print(f"[{mark}] {c['check']:<{width}} {c['detail']}")
-            if not c["ok"] and c["fix"]:
-                print(f"        fix: {c['fix']}")
-        print(f"\n{'RESULT: PASS' if passed else 'RESULT: FAIL'} "
-              f"({len(checks) - len(errors) - len(warns)}/{len(checks)} checks, "
-              f"{len(errors)} error(s), {len(warns)} warning(s))")
-        if args.strict and warns and not errors:
-            print("[qa] strict: warnings are failures in delivery mode")
-        print(f"[qa] wrote {report_path}")
+        _print_report(report, report_path)
     sys.exit(0 if passed else 1)
 
 
