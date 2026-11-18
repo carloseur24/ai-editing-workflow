@@ -22,14 +22,19 @@ import subprocess
 import sys
 from pathlib import Path
 
-from ..context import DEFAULT_CONFIG, python_cmd, subprocess_env
+from ..context import DEFAULT_CONFIG, load_config, python_cmd, subprocess_env
 from ..domain import runs
 from . import deliver
 
 
-def qa_is_current(video: Path) -> bool:
-    """True when a strict PASS report exists for exactly these video bytes."""
-    report_path = video.parent / "qa_report.json"
+def qa_is_current(video: Path, cfg: dict | None = None) -> bool:
+    """True when a strict PASS report exists for exactly these video bytes.
+
+    The report is local evidence, never the delivery shelf: for a delivered
+    master it is read from `output/<sku>/<run>/qa_report.json` (or the
+    `output/<sku>/qa/<run>/` sidecar), which is where QA writes it.
+    """
+    report_path = runs.evidence_path(video, cfg)
     if not report_path.exists() or not video.exists():
         return False
     try:
@@ -62,7 +67,8 @@ def main(argv: list[str] | None = None) -> None:
         sys.exit(f"[finish] no completed run for {args.project}; render first")
 
     video = Path(entry.get("video") or "")
-    if not args.re_qa and video.exists() and qa_is_current(video):
+    cfg = load_config(args.config, project=runs.input_dir(args.project))
+    if not args.re_qa and video.exists() and qa_is_current(video, cfg):
         print("[finish] QA gate: reusing the strict PASS for this file")
     else:
         qa = python_cmd("qa", "--latest", args.project, "--strict")
