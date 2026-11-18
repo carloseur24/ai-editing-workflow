@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "notes": "Semantic SFX roles for `fenix sfx`. Relative files resolve inside config.sfx.library_dir; `repo:` paths resolve from the repo root. `gain_db` is applied after each sample is peak-normalised, so the mix is gain-staged, not file-level-roulette. `align` decides which part of the sample lands on the cue: start, peak, end or loop.",
+  "roles": {
+    "impact_sub": {
+      "files": ["fenix_sfx/fenix_impact_sub.wav"],
+      "gain_db": -6.0,
+      "max_sec": 1.6,
+      "align": "start"
+    },
+    "impact_braam": {
+      "files": ["ES_Designed, Braam, Big Impact, Heavy, Cinematic, Epic, Braam - Epidemic Sound.wav"],
+      "gain_db": -16.0,
+      "max_sec": 3.0,
+      "align": "start"
+    },
+    "stinger_final": {
+      "files": ["ES_Designed, Stinger, Distorted Sub Pulse, Impact - Epidemic Sound.wav"],
+      "gain_db": -12.0,
+      "max_sec": 2.5,
+      "align": "start"
+    },
+    "riser_tension": {
+      "files": ["fenix_sfx/fenix_riser_tension.wav"],
+      "gain_db": -10.0,
+      "max_sec": 1.5,
+      "align": "end"
+    },
+    "whoosh_air": {
+      "files": [
+        "fenix_sfx/fenix_whoosh_air.wav",
+        "ES_Swooshes, Whoosh, Short, Dark, Tonal, Airy - Epidemic Sound.wav"
+      ],
+      "gain_db": -14.0,
+      "max_sec": 1.6,
+      "align": "peak"
+    },
+    "whoosh_whip": {
+      "files": ["fenix_sfx/fenix_whoosh_whip.wav"],
+      "gain_db": -12.0,
+      "max_sec": 0.8,
+      "align": "peak"
+    },
+    "click_tactile": {
+      "files": ["fenix_sfx/fenix_click_tactile.wav"],
+      "gain_db": -10.0,
+      "max_sec": 0.1,
+      "align": "start"
+    },
+    "thud_body": {
+      "files": ["fenix_sfx/fenix_thud_body.wav"],
+      "gain_db": -12.0,
+      "max_sec": 0.25,
+      "align": "start"
+    },
+    "tick_micro": {
+      "files": ["fenix_sfx/fenix_tick_micro.wav"],
+      "gain_db": -18.0,
+      "max_sec": 0.08,
+      "align": "start"
+    },
+    "chime_lock": {
+      "files": ["fenix_sfx/fenix_chime_lock.wav"],
+      "gain_db": -12.0,
+      "max_sec": 2.0,
+      "align": "start"
+    },
+    "paper_slice": {
+      "files": ["fenix_sfx/fenix_paper_slice.wav"],
+      "gain_db": -14.0,
+      "max_sec": 0.4,
+      "align": "start"
+    },
+    "ui_data": {
+      "files": ["ES_User Interface, Data, Computer, Futuristic, Data Processing, Loading 13 - Epidemic Sound.wav"],
+      "gain_db": -16.0,
+      "max_sec": 1.4,
+      "align": "start"
+    },
+    "env_room": {
+      "files": ["fenix_sfx/fenix_env_room.wav"],
+      "gain_db": -18.0,
+      "max_sec": 10.0,
+      "align": "loop"
+    }
+  }
+}
