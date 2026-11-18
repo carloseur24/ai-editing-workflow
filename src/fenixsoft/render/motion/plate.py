@@ -19,6 +19,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 from ...context import FONTS_DIR, REPO_ROOT
+from ...domain import safe_zones
 from .sdf import PRESETS
 
 DEFAULTS = {
@@ -238,6 +239,36 @@ def _hex_rgba(value: str, alpha: float = 1.0):
 
 
 # -------------------------------------------------------------------- compose
+def resolve_text_zones(spec: dict, cfg: dict, mode: str | None = None) -> list[str]:
+    """Replace ``zone`` with the band's pixel ``y`` (explicit ``y`` still wins).
+
+    Zones are resolved once at load time so the executed spec — and therefore
+    the run's ``motion.json`` snapshot — carries the exact coordinates used.
+    Layers that share a zone stack downward in file order (title, then spec), so
+    a ``lower`` title and its ``lower`` spec do not land on the same line.
+    """
+    warnings: list[str] = []
+    preset = mode or spec.get("safe_zone_mode") or "reels_universal"
+    stacking: dict[str, int] = {}
+    for i, layer in enumerate(spec.get("text") or []):
+        if not isinstance(layer, dict):
+            continue
+        zone = safe_zones.normalize_zone(layer.get("zone"))
+        if not zone or layer.get("y") is not None:
+            continue
+        size = int(layer.get("size", 64))
+        y = safe_zones.zone_y(zone, cfg, mode=preset, size=size)
+        if y is None:
+            warnings.append(f"text[{i}]: zone {zone!r} has no y in "
+                            f"safe_zones.{preset}")
+            continue
+        if zone in stacking:
+            y = max(y, stacking[zone])
+        layer["y"] = y
+        stacking[zone] = y + int(round(size * 1.35))
+    return warnings
+
+
 def render_frame(spec: dict, t: float) -> np.ndarray:
     W, H = int(spec["width"]), int(spec["height"])
     obj = spec.get("object") or {}
