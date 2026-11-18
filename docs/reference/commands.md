@@ -16,15 +16,15 @@ and works from any working directory. An editable install
 
 | Command | Cost | Purpose | Exit |
 |---|---|---|---|
-| `fenix storyboard <project> [--questions] [--framework NAME] [--force] [--json]` | ~1 s | brief → timed scenes + `storyboard.md`/`.json`; 12 frameworks | 0/1 |
+| `fenix storyboard <project> [--questions] [--framework NAME] [--force] [--json]` | ~1 s | brief → timed scenes + `storyboard.md`/`.json`; `story.shots` → validated `output/<p>/shot_order.json` | 0/1 |
 | `fenix doctor [--json]` | ~1 s | print resolved paths and asset state: ffmpeg, fonts, music, SFX library, motion textures, GSAP, delivery dir, models, SKUs | 0/1 |
 | `fenix job <project> [--config PATH] [--json]` | ~1 s | one card: mode, missing inputs, skills, stage/render state, next command | 0/1 |
 | `fenix lint <sku> [--target 28] [--config PATH] [--strict] [--json]` | ~1 s | word budget, tempo, phonetics, display coverage | 0/1 |
 | `fenix beats [<sku>] [--music FILE] [--config PATH] [--force] [--print]` | ~2 s | measured BPM/phase → `beat_grid.json` | 0/1 |
 | `fenix frames <sku> [--fps 1] [--width 360] [--out DIR] [--candidates-step 0.25] [--config PATH] [--no-candidates]` | ~20 s | keyframes + `candidates.json` | 0/1 |
-| `fenix align <sku> [--config PATH] [--target-sec N] [--engine auto\|faster-whisper\|energy] [--refresh-asr]` | ~15 s | trim VO, word timings, narration lines | 0/1 |
+| `fenix align <sku> [--config PATH] [--target-sec N] [--engine auto\|faster-whisper\|energy] [--refresh-asr]` | ~15 s | trim VO, word timings, narration lines; no-op (exit 0) for a music-only SKU | 0/1 |
 | `fenix tts <project> [--spec PATH] [--out PATH] [--json]` | 2–20 s | ElevenLabs/OpenAI voiceover → `input/<p>/voice.mp3` | 0/1 |
-| `fenix plan <sku> [--config PATH] [--dry-run] [--json]` | ~2 s | narration lines × candidates → `edit_plan.json` | 0/1 |
+| `fenix plan <sku> [--config PATH] [--dry-run] [--force] [--json]` | ~2 s | `brief.story.shots` → locked `edit_plan.json`, else narration lines × candidates; a locked or hand-authored plan is kept until `--force` | 0/1 |
 | `fenix validate <sku> [--config PATH] [--strict] [--json]` | ~2 s | pre-render gate | 0/1 |
 | `fenix sfx <sku> [--config PATH] [--library DIR] [--install-library] [--force] [--dry-run] [--strict] [--json]` | ~2–5 s | cue sheet → layered SFX bus + ducked/vacuumed music bed | 0/1 |
 | `fenix sfx --install-library [--force]` | ~1 s | synthesize the procedural core into `sfx.library_dir/<install_subdir>/` | 0/1 |
@@ -33,10 +33,10 @@ and works from any working directory. An editable install
 
 | Command | Cost | Purpose | Exit |
 |---|---|---|---|
-| `fenix render <sku> [--config PATH] [--out MP4] [--remix] [--from RUN] [--allow-soft-in] [--hf-overlay] [--hf-workers N] [--draft]` | ~3 min / 13 s | render a new immutable run | 0/1 |
+| `fenix render <sku> [--config PATH] [--out MP4] [--remix] [--from RUN] [--allow-soft-in] [--hf-overlay] [--hf-workers N] [--draft] [--preview] [--transition KIND\|--no-transition]` | ~3 min / 13 s / ~3–5 s | render a new immutable run; `--preview` writes stills only; `--transition` forces one pre-roll blend, `--no-transition` forces hard cuts | 0/1 |
 | `fenix motion <project> [--spec PATH] [--out PATH] [--still T] [--seconds N] [--deliver] [--json]` | 10 s–3 min | spec-driven motion plate (MP4 or alpha MOV) | 0/1 |
 | `fenix track <project> [--spec PATH] [--out JSON] [--json]` | 2–10 s | template-track a patch → normalised points for `comp` | 0/1 |
-| `fenix comp <project> [--spec PATH] [--out MP4] [--deliver] [--json]` | 5 s–1 min | key/alpha layers, rect/ellipse masks, moves, track, fades → `output/<p>/comp/` | 0/1 |
+| `fenix comp <project> [--spec PATH] [--out MP4] [--reuse] [--force] [--preview] [--deliver] [--json]` | 5 s–1 min / ~1 s / <10 s | key/alpha layers, rect/ellipse masks, moves, track, fades → `output/<p>/comp/`; `--reuse` (implied by `--deliver`) copies an unchanged comp; `--preview` writes stills at the base cut midpoints; `--deliver` uses the shared bundle (`comp.mp4` + spec/manifest/QA/README) | 0/1 |
 | `fenix fx <project> [--spec PATH] [--out MP4] [--deliver] [--json]` | 5–30 s | seeded particles, glitch, shatter → `output/<p>/fx/` | 0/1 |
 | `fenix grade <project> [--spec PATH] [--out MP4] [--deliver] [--json]` | 5–30 s | LUT + primaries + shot match + secondaries → `output/<p>/grade/` | 0/1 |
 | `fenix scopes <project> --input MP4 [--spec PATH] [--time SEC] [--no-audio] [--json]` | ~2 s | histogram/vectorscope/waveform/spectrum + stats | 0/1 |
@@ -68,7 +68,7 @@ Naming grammar, measured budget and duplicate rules:
 
 | Command | Cost | Purpose | Exit |
 |---|---|---|---|
-| `fenix make <project> [--config PATH] [--dry-run] [--force] [--remix] [--no-finish] [--no-qa] [--draft]` | full chain | run stale edit stages → render/remix → QA → finish; mtime + config slices | 0/1 |
+| `fenix make <project> [--config PATH] [--dry-run] [--force] [--remix] [--no-finish] [--no-qa] [--draft] [--post comp]` | full chain | run stale edit stages → render/remix → QA → finish; `--post comp` adds motion → comp → post QA → comp delivery, honoring the project's `post.motion`/`post.comp` | 0/1 |
 
 `make` is the edit-chain shortcut: it skips stages whose artifacts are newer
 than their inputs **and** whose config slice is unchanged (`.state/<stage>.json`),
@@ -76,18 +76,58 @@ full-renders when picture inputs or `config.picture` moved, remixes when only
 audio/`config.audio` moved, and stops at the first failure. After running
 stages it re-decides the render mode, so a changed `edit_plan.json` becomes a
 full render instead of a remix of the old picture. `align` also checks
-the voice+script fingerprint instead of realigning on a copy/title edit. It does
+the voice+script fingerprint instead of realigning on a copy/title edit, and
+skips a music-only SKU. A **locked** `edit_plan.json` (written from
+`brief.story.shots`) is never re-planned on a timer: the stage is skipped until
+the brief's shot table changes, and the shot table is the thing you edit. A
+**hand-authored** plan (cuts with no planner stamp) is treated the same way and
+reported as `hand-locked plan (manual)`; `--force` is the only override. It does
 **not** run `tts`, `label` or the post stages. `--draft` renders a review encode,
 then skips QA and delivery; `--no-qa` skips QA and blocks `finish`. `--dry-run`
 prints the plan without running anything.
+
+`--post comp` closes the edit → post chain: strict edit QA first (a comp master
+cannot bypass it), then `motion` when `motion.json` is newer than the newest
+plate, `comp --reuse` (copy when spec + resolved inputs match, else render),
+`qa --post` on the comp run, and finally the comp delivery copy. The edit run is
+left local because it is the base the comp reads. `--dry-run` prints the post
+chain (`motion`/`comp`/`post qa`/`deliver`) and writes nothing. A project with
+`post.comp: false` has no post master: every post row including `deliver` is
+SKIP, `run_post_comp` returns without rendering or copying, and the message
+names the edit-delivery path (`fenix make <p>` / `fenix finish <p>`). `--post
+comp` never delivers the edit master itself, so it cannot bypass or duplicate
+the edit QA/delivery contract.
+
+Preview before a full render:
+
+```bash
+./fenix render <p> --preview    # one still per cut midpoint + each card, ~3–5 s
+./fenix comp <p> --preview      # comp layers at the base cut midpoints, <10 s
+```
+
+Previews live under `output/<p>/preview/`, carry `preview.json` and a contact
+sheet, and never enter `runs.json` or `latest.json`. They composite the same
+overlay, native text cards, captions and grade as the real render, so text
+placement is reviewable without spending an encode.
+
+Text-only shots no longer need a motion plate + comp: `sku.text_cards` renders
+natively in the edit pass. For a real post chain (plate → comp → post QA →
+deliver), run `fenix make <p> --post comp` with `@render/latest` /
+`@motion/latest` refs in `comp.json`, or the individual steps:
+`fenix motion <p> --deliver`, `fenix comp <p> --reuse --deliver`,
+`fenix qa --post --latest <p>`.
+
+`comp --deliver` implies `--reuse`: an unchanged spec + resolved inputs is a
+copy, and the existing run is delivered rather than duplicated (`--force`
+re-encodes). A second delivery is a ~0.5 s copy with no ffmpeg.
 
 ## Gates, delivery and maintenance
 
 | Command | Cost | Purpose | Exit |
 |---|---|---|---|
-| `fenix qa [VIDEO] [--latest SKU] [--config PATH] [--target-lufs N] [--max-bytes N] [--strict] [--json]` | ~30 s | delivery gate, writes `qa_report.json` | 0/1 |
+| `fenix qa [VIDEO] [--latest SKU] [--config PATH] [--target-lufs N] [--max-bytes N] [--post] [--strict] [--json]` | ~30 s | delivery gate, writes `qa_report.json` (local evidence); `--post` runs the post-master profile on the newest comp run | 0/1 |
 | `fenix eval <sku> [--skip-align] [--skip-render] [--run DIR] [--baseline PATH] [--update-baseline] [--strict] [--json]` | ~30 s | regression vs `eval/<sku>_baseline.json` | 0/1 |
-| `fenix deliver [RUN] [--latest SKU] [--config PATH] [--dir PATH] [--downloads\|--no-downloads] [--prune\|--no-prune] [--dry-run]` | ~1 s | copy a finished run to the delivery shelf | 0/1 |
+| `fenix deliver [RUN] [--latest SKU] [--config PATH] [--dir PATH] [--downloads\|--no-downloads] [--prune\|--no-prune] [--dry-run]` | ~1 s | copy a finished run to the delivery shelf through the shared bundle; writes `delivery_readme.md` and records copied/skipped in `delivery.json` | 0/1 |
 | `fenix finish <project> [--config PATH] [--no-prune] [--no-downloads] [--re-qa]` | ~40 s | strict QA → delivery shelf + Downloads → prune local media; reuses a strict PASS for the same bytes | 0/1 |
 | `fenix batch [--only SKU]... [--skip-existing] [--remix] [--no-qa]` | long | align → render → qa for several SKUs | 0/1 |
 | `fenix runs <sku>` | ~1 s | list run directories, sizes and timestamps | 0 |
@@ -101,7 +141,8 @@ Notes:
   `validate`, `sfx`, `render`, `qa`, `deliver`, `finish`, `make` and
   `label scan`/`label apply`. `storyboard`, `motion`, `track`, `comp`, `fx`, `grade`,
   `scopes`, `longform`, `tts`, `eval`, `batch`, `doctor` and `runs` use
-  `config/pipeline.json` directly.
+  `config/pipeline.json` directly (with the gitignored `pipeline.local.json`
+  overlay, so delivery and SFX paths still apply).
 - `deliver` defaults to `delivery.copy_to_downloads` and
   `delivery.prune_local_media`; the `--downloads/--no-downloads` and
   `--prune/--no-prune` pairs override them for one run.
@@ -134,6 +175,10 @@ current tree:
 - `warnings` — e.g. no `brief.json`, SFX library not installed;
 - `skills` — the skills to load, with `installed` / `MISSING`;
 - `stages` — run/skip + reason for the edit/hybrid chain;
+- `order` — the ordered shot table (`locked`, `source`, `manual`, `total_sec`,
+  `order_confirmed`) from `brief.story.shots` or the current plan, so the card
+  shows the shots instead of a count; a hand-authored plan reports
+  `source: "plan"`, `manual: true`, `order_confirmed: true`;
 - `render` — `skip`, `remix`, `full` (or `none` outside edit/hybrid) + why;
 - `master` — the current run video, when one exists;
 - `next` — exact command(s), in order;
@@ -167,9 +212,12 @@ The JSON each command reads is summarized in [specs.md](specs.md):
 
 # Post-production paths
 ./fenix storyboard project --questions          # write the brief first
+./fenix storyboard project                     # story.shots -> shot_order.json (order lock)
+./fenix plan project                           # locked cuts, no VO-derived durations
 ./fenix motion project --still 1.5              # review one plate frame
 ./fenix motion project --deliver                # full plate -> delivery shelf
 ./fenix comp project --deliver                  # layers over a base
+./fenix comp project --reuse --deliver          # unchanged spec+inputs: copy, no encode
 ./fenix grade project --deliver                 # LUT/primaries/match
 ./fenix longform project --deliver              # chaptered master
 
