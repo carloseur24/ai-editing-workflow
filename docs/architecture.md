@@ -2,7 +2,9 @@
 
 The repo is a Python application, not a folder of scripts. Code lives in
 `src/fenixsoft/`, inputs in `input/`, generated artifacts in `output/`, and the
-only numeric policy in `config/pipeline.json`.
+only numeric policy in `config/pipeline.json`. The four layers (machinery,
+project intent, generated media, product) and their config precedence are
+defined in [agent/production-line.md](agent/production-line.md).
 
 ## Layout
 
@@ -11,6 +13,7 @@ only numeric policy in `config/pipeline.json`.
 ├── fenix                          # launcher: python -m fenixsoft (no install needed)
 ├── config/pipeline.json           # portable canvas, timing, quality, audio, encoding, safe zones
 ├── config/pipeline.local.json     # optional, gitignored machine paths (deep-merged)
+├── input/<project>/config.json    # optional, sparse project overlay (project intent)
 ├── pyproject.toml                 # package metadata + optional `fenixsoft` console script
 ├── src/fenixsoft/
 │   ├── cli.py                     # command map: doctor, lint, beats, frames, align,
@@ -106,8 +109,10 @@ Rules:
    command rebuilds what it needs (models are re-downloaded, not required for QA).
 6. **Config is policy, code is mechanism.** Thresholds and layout numbers live in
    `config/pipeline.json`; code reads them with defaults. A gitignored
-   `config/pipeline.local.json` is deep-merged for machine paths only, so the
-   public config stays portable.
+   `config/pipeline.local.json` is deep-merged for machine paths, and a sparse
+   `input/<project>/config.json` is then merged on top for project intent. The
+   public config stays portable; project-only values never enter it. An explicit
+   `--config` replaces the base but the project overlay still applies.
 7. **A gate is not advisory.** `--strict` turns warnings into failures for
    delivery; the agent does not edit the output to make a gate pass.
 
