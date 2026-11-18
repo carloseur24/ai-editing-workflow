@@ -1,6 +1,9 @@
 # QA gates
 
-`fenix qa` writes `output/<sku>/<run>/qa_report.json`:
+`fenix qa` writes `output/<sku>/<run>/qa_report.json` — local evidence. QA never
+writes the delivery shelf: for a delivered master it reads the master and writes
+the report to the local run when it exists, else to
+`output/<sku>/qa/<run>/qa_report.json` (`finish` reuses the same path).
 
 ```json
 {"video": "...", "pass": true, "errors": 0, "warnings": 0,
@@ -12,6 +15,14 @@ The good run has **30 base checks** plus one `w_layout` row per render-time
 layout warning. `--strict` makes every warning a failure; delivery requires it.
 `fenix finish` reuses a strict PASS for the same video bytes (size + mtime
 fingerprint); `--re-qa` forces a fresh pass.
+
+A **music-only** piece (`sku.voiceover: null`/`"none"`) has no voiceover,
+transcript or caption stream. QA drops `c_timings`, `d_script_match`,
+`d_tail_complete` and the `c_cps_*` / `c_caption_*` rows, records the skipped ids
+in `qa_report.json → skipped_checks`, and adds one informational row
+`a_music_only`. `d_matches_vo` stays: it compares the video against the run's
+planned `duration_sec` (the label reads `plan`). Loudness, true peak, clipping,
+black frames, size, container and `c_clip_identity` are unchanged.
 
 ## Container
 
@@ -54,6 +65,30 @@ shape:
 `fenix render` copies the cue sheet and this report into the run directory, so
 the delivered evidence shows exactly which sound design the master used.
 
+## Post-master QA profile — `fenix qa --post`
+
+A comp/fx/grade master has already consumed the edit plan, the voiceover and the
+captions, so the 30-check edit gate no longer applies. `fenix qa --post
+<comp-run>` (or `--post --latest <sku>`) runs 19 post-master rows and writes
+`qa_report.json` into the comp run (local, never the shelf):
+
+| ID | Severity | Threshold | Fix |
+|---|---|---|---|
+| `pm_manifest` | warn | `manifest.json` present with a layer count | run `fenix comp` so the run carries its executed spec |
+| `v_codec` / `v_resolution` / `v_fps` / `v_pix_fmt` / `v_profile` / `v_level` | error | h264 Main 4.2, comp canvas, `yuv420p` | re-run the stage with the shared encoding block |
+| `v_faststart` | error | `moov` before `mdat` | re-mux with `-movflags +faststart` |
+| `v_size_budget` | error | ≤ 15.5 MB | the stage's CRF/bitrate fallback |
+| `pm_duration` | error | within 0.35 s of the comp spec / base plan | the graph trimmed a different duration |
+| `q_run_versioned` | warn | `<sku>_<stamp>/<stage>.mp4` | run the stage into its run directory |
+| `pm_base` | info | base `edit_plan.json` readable | point `comp.json` at `@render/latest` |
+| `a_stream` / `a_lufs` / `a_true_peak` / `a_clipping` | error | AAC 48 kHz stereo, −14 ± 1 LUFS, ≤ −1.0 dBTP, 0 full-scale | fix the comp audio args / limiter ceiling |
+| `v_black_frames` | error | darkest sampled mean luma ≥ 12 | layer opacity/fades crushed the picture |
+| `pm_cut_identity` | error | corr ≥ 0.75 per base cut | a layer replaced the base shot or the base changed |
+| `pm_cut_fidelity` | warn | corr ≥ 0.90 per base cut | inspect layer opacity/key/mask |
+
+`fenix make --post comp` runs strict edit QA first, then comp and this profile
+before delivering; a comp master cannot bypass the edit gate.
+
 ## Post-production gates
 
 `fenix motion`, `fenix track`, `fenix comp`, `fenix fx`, `fenix grade`,
@@ -83,7 +118,7 @@ media and manifest to the delivery shelf and Downloads.
 | `d_script_match` | warn | similarity ≥ 0.55 | check the script/voiceover match |
 | `d_tail_complete` | error | ≥ 0.03 s trailing silence | re-run align so the last phrase completes |
 | `q_run_versioned` | warn | `<sku>_<stamp>/<run>_final.mp4` | re-render into a run directory |
-| `d_matches_vo` | error | within 0.35 s of the VO | re-render or re-align |
+| `d_matches_vo` | error | within 0.35 s of the VO (or of the plan for music-only) | re-render or re-align |
 | `d_max` | error | ≤ 30.0 s (28.5 + 2.0 allowance) | shorten the script |
 
 ## Edit and content
@@ -96,12 +131,17 @@ media and manifest to the delivery shelf and Downloads.
 | `p_window_soft` | warn | ≤ 30 % of each shot under floor | move the in-point |
 | `p_beat_offset` | warn | ≤ 60 ms | regenerate the plan on the measured grid |
 | `p_beat_hard` | error | ≤ 120 ms | same |
+
+With `quality.beat_policy = picture` both beat rows stay in the report as
+`info`: the offsets are measured and printed but never fail a piece that cuts on
+action (cinematic long takes, documentary, physical comedy).
 | `c_clip_identity` | error | corr ≥ 0.90 for every shot | the renderer showed the wrong source clip |
 | `c_cps_max` | warn | ≤ 20 CPS (or `allow_fast_captions`) | merge/shorten cards |
 | `c_cps_fail` | warn | ≤ 25 CPS (or `allow_fast_captions`) | same |
 | `c_caption_text` | error | non-empty, ≤ 29 chars, no Unicode check | fix `display_map`/`display_merge` |
 | `c_caption_zone` | error | ≤ 885 px wide, font ≥ 24 px | shorten the copy or widen the zone deliberately |
 | `c_caption_dupes` | warn | 0 repeated consecutive cards | fix chunking |
+| `a_music_only` | info | VO/script/caption rows skipped for a music-only piece | not a failure; see `skipped_checks` |
 
 ## HyperFrames overlay (only with `render --hf-overlay`)
 
