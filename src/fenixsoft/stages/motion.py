@@ -67,6 +67,10 @@ def main(argv: list[str] | None = None) -> None:
     project.mkdir(parents=True, exist_ok=True)
     spec_path = args.spec or (project / "motion.json")
     spec = load_spec(spec_path)
+    cfg = load_config(DEFAULT_CONFIG, project=project)
+    zone_warnings = plate.resolve_text_zones(spec, cfg)
+    for warning in zone_warnings:
+        print(f"[motion] WARNING: {warning}")
 
     if args.still is not None:
         out = args.out or (OUTPUT_DIR / args.project / "motion" / "still.png")
@@ -85,7 +89,6 @@ def main(argv: list[str] | None = None) -> None:
             json.dumps(data, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8")
         if args.deliver:
-            cfg = load_config(DEFAULT_CONFIG)
             deliv = cfg.get("delivery") or {}
             shelf = Path(deliv.get("dir", "")).expanduser() / run.name
             shelf.mkdir(parents=True, exist_ok=True)
