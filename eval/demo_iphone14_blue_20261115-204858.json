@@ -1,0 +1,394 @@
+{
+  "sku": "demo_iphone14_blue",
+  "generated_at": "2026-11-15T20:48:58",
+  "run": "demo_iphone14_blue_20261115-204450",
+  "video": "output/demo_iphone14_blue/demo_iphone14_blue_20261115-204450/demo_iphone14_blue_20261115-204450_final.mp4",
+  "baseline_video": "output/demo_iphone14_blue/demo_iphone14_blue_20261115-185938/demo_iphone14_blue_20261115-185938_final.mp4",
+  "metrics": {
+    "duration_sec": 28.021,
+    "cuts": 16,
+    "size_mb": 13.541,
+    "in_point_min_ratio": 0.932,
+    "in_point_mean_ratio": 1.628,
+    "beat_max_offset_ms": 0.5,
+    "beat_mean_offset_ms": 0.2,
+    "caption_max_cps": 28.5,
+    "caption_mean_cps": 19.2,
+    "lufs": -14.36,
+    "true_peak_db": -1.23,
+    "warnings": 0,
+    "qa_errors": 0,
+    "qa_warnings": 0,
+    "qa_pass": true,
+    "window_min_ratio": 0.957,
+    "window_mean_ratio": 1.423,
+    "window_soft_frac": 0.009,
+    "clip_identity_mismatches": 0,
+    "ssim_vs_baseline": 0.990258
+  },
+  "baseline_metrics": {
+    "duration_sec": 28.023,
+    "cuts": 16,
+    "size_mb": 13.535,
+    "in_point_min_ratio": 0.932,
+    "in_point_mean_ratio": 1.628,
+    "beat_max_offset_ms": 0.5,
+    "beat_mean_offset_ms": 0.2,
+    "caption_max_cps": 28.4,
+    "caption_mean_cps": 19.19,
+    "lufs": -14.34,
+    "true_peak_db": -1.32,
+    "warnings": 0,
+    "qa_errors": 0,
+    "qa_warnings": 0,
+    "qa_pass": true,
+    "window_min_ratio": 0.957,
+    "window_mean_ratio": 1.423,
+    "window_soft_frac": 0.009,
+    "clip_identity_mismatches": 0,
+    "ssim_vs_baseline": 0.835587
+  },
+  "cut_quality": [
+    {
+      "index": 0,
+      "clip": "01_back_cameras.mp4",
+      "in": 2.0,
+      "dur": 3.065,
+      "in_point_ratio": 1.293,
+      "n": 16,
+      "mean_ratio": 1.157,
+      "min_ratio": 0.856,
+      "soft_frac": 0.0,
+      "mean_motion": 7.02
+    },
+    {
+      "index": 1,
+      "clip": "03_edges_ports.mp4",
+      "in": 3.75,
+      "dur": 2.531,
+      "in_point_ratio": 1.281,
+      "n": 13,
+      "mean_ratio": 1.678,
+      "min_ratio": 0.83,
+      "soft_frac": 0.0,
+      "mean_motion": 11.01
+    },
+    {
+      "index": 2,
+      "clip": "02_screen_faceid.mp4",
+      "in": 4.25,
+      "dur": 1.509,
+      "in_point_ratio": 1.721,
+      "n": 7,
+      "mean_ratio": 1.381,
+      "min_ratio": 0.855,
+      "soft_frac": 0.0,
+      "mean_motion": 8.87
+    },
+    {
+      "index": 3,
+      "clip": "04_box.mp4",
+      "in": 2.75,
+      "dur": 1.51,
+      "in_point_ratio": 0.972,
+      "n": 8,
+      "mean_ratio": 2.088,
+      "min_ratio": 1.023,
+      "soft_frac": 0.0,
+      "mean_motion": 20.67
+    },
+    {
+      "index": 4,
+      "clip": "03_edges_ports.mp4",
+      "in": 3.75,
+      "dur": 2.02,
+      "in_point_ratio": 1.281,
+      "n": 10,
+      "mean_ratio": 1.776,
+      "min_ratio": 0.83,
+      "soft_frac": 0.0,
+      "mean_motion": 10.93
+    },
+    {
+      "index": 5,
+      "clip": "01_back_cameras.mp4",
+      "in": 3.0,
+      "dur": 1.997,
+      "in_point_ratio": 1.344,
+      "n": 10,
+      "mean_ratio": 1.088,
+      "min_ratio": 0.856,
+      "soft_frac": 0.0,
+      "mean_motion": 7.37
+    },
+    {
+      "index": 6,
+      "clip": "03_edges_ports.mp4",
+      "in": 5.0,
+      "dur": 1.532,
+      "in_point_ratio": 2.392,
+      "n": 8,
+      "mean_ratio": 1.545,
+      "min_ratio": 0.991,
+      "soft_frac": 0.0,
+      "mean_motion": 10.61
+    },
+    {
+      "index": 7,
+      "clip": "02_screen_faceid.mp4",
+      "in": 4.25,
+      "dur": 1.51,
+      "in_point_ratio": 1.721,
+      "n": 7,
+      "mean_ratio": 1.381,
+      "min_ratio": 0.855,
+      "soft_frac": 0.0,
+      "mean_motion": 8.87
+    },
+    {
+      "index": 8,
+      "clip": "04_box.mp4",
+      "in": 2.75,
+      "dur": 1.509,
+      "in_point_ratio": 0.972,
+      "n": 8,
+      "mean_ratio": 2.088,
+      "min_ratio": 1.023,
+      "soft_frac": 0.0,
+      "mean_motion": 20.67
+    },
+    {
+      "index": 9,
+      "clip": "01_back_cameras.mp4",
+      "in": 5.75,
+      "dur": 1.509,
+      "in_point_ratio": 0.932,
+      "n": 8,
+      "mean_ratio": 1.068,
+      "min_ratio": 0.685,
+      "soft_frac": 0.0,
+      "mean_motion": 8.16
+    },
+    {
+      "index": 10,
+      "clip": "03_edges_ports.mp4",
+      "in": 5.0,
+      "dur": 1.509,
+      "in_point_ratio": 2.392,
+      "n": 8,
+      "mean_ratio": 1.545,
+      "min_ratio": 0.991,
+      "soft_frac": 0.0,
+      "mean_motion": 10.61
+    },
+    {
+      "index": 11,
+      "clip": "02_screen_faceid.mp4",
+      "in": 0.0,
+      "dur": 2.02,
+      "in_point_ratio": 1.741,
+      "n": 11,
+      "mean_ratio": 1.117,
+      "min_ratio": 0.789,
+      "soft_frac": 0.0,
+      "mean_motion": 10.54
+    },
+    {
+      "index": 12,
+      "clip": "01_back_cameras.mp4",
+      "in": 2.0,
+      "dur": 1.51,
+      "in_point_ratio": 1.293,
+      "n": 8,
+      "mean_ratio": 1.261,
+      "min_ratio": 1.109,
+      "soft_frac": 0.0,
+      "mean_motion": 8.68
+    },
+    {
+      "index": 13,
+      "clip": "03_edges_ports.mp4",
+      "in": 0.0,
+      "dur": 1.509,
+      "in_point_ratio": 1.042,
+      "n": 8,
+      "mean_ratio": 0.957,
+      "min_ratio": 0.665,
+      "soft_frac": 0.0,
+      "mean_motion": 5.15
+    },
+    {
+      "index": 14,
+      "clip": "02_screen_faceid.mp4",
+      "in": 1.0,
+      "dur": 1.509,
+      "in_point_ratio": 1.15,
+      "n": 8,
+      "mean_ratio": 1.06,
+      "min_ratio": 0.789,
+      "soft_frac": 0.0,
+      "mean_motion": 10.84
+    },
+    {
+      "index": 15,
+      "clip": "04_box.mp4",
+      "in": 0.0,
+      "dur": 1.272,
+      "in_point_ratio": 4.525,
+      "n": 7,
+      "mean_ratio": 1.58,
+      "min_ratio": 0.413,
+      "soft_frac": 0.143,
+      "mean_motion": 15.74
+    }
+  ],
+  "diffs": [
+    {
+      "metric": "duration_sec",
+      "baseline": 28.023,
+      "current": 28.021,
+      "delta": -0.002,
+      "status": "same",
+      "severity": "ok"
+    },
+    {
+      "metric": "cuts",
+      "baseline": 16,
+      "current": 16,
+      "delta": 0,
+      "status": "same",
+      "severity": "ok"
+    },
+    {
+      "metric": "size_mb",
+      "baseline": 13.535,
+      "current": 13.541,
+      "delta": 0.006,
+      "status": "same",
+      "severity": "ok"
+    },
+    {
+      "metric": "in_point_min_ratio",
+      "baseline": 0.932,
+      "current": 0.932,
+      "delta": 0.0,
+      "status": "ok",
+      "severity": "ok"
+    },
+    {
+      "metric": "in_point_mean_ratio",
+      "baseline": 1.628,
+      "current": 1.628,
+      "delta": 0.0,
+      "status": "info",
+      "severity": "ok"
+    },
+    {
+      "metric": "window_min_ratio",
+      "baseline": 0.957,
+      "current": 0.957,
+      "delta": 0.0,
+      "status": "ok",
+      "severity": "ok"
+    },
+    {
+      "metric": "window_mean_ratio",
+      "baseline": 1.423,
+      "current": 1.423,
+      "delta": 0.0,
+      "status": "same",
+      "severity": "ok"
+    },
+    {
+      "metric": "window_soft_frac",
+      "baseline": 0.009,
+      "current": 0.009,
+      "delta": 0.0,
+      "status": "same",
+      "severity": "ok"
+    },
+    {
+      "metric": "beat_max_offset_ms",
+      "baseline": 0.5,
+      "current": 0.5,
+      "delta": 0.0,
+      "status": "same",
+      "severity": "ok"
+    },
+    {
+      "metric": "beat_mean_offset_ms",
+      "baseline": 0.2,
+      "current": 0.2,
+      "delta": 0.0,
+      "status": "same",
+      "severity": "ok"
+    },
+    {
+      "metric": "caption_max_cps",
+      "baseline": 28.4,
+      "current": 28.5,
+      "delta": 0.1,
+      "status": "same",
+      "severity": "ok"
+    },
+    {
+      "metric": "caption_mean_cps",
+      "baseline": 19.19,
+      "current": 19.2,
+      "delta": 0.01,
+      "status": "same",
+      "severity": "ok"
+    },
+    {
+      "metric": "lufs",
+      "baseline": -14.34,
+      "current": -14.36,
+      "delta": -0.02,
+      "status": "same",
+      "severity": "ok"
+    },
+    {
+      "metric": "true_peak_db",
+      "baseline": -1.32,
+      "current": -1.23,
+      "delta": 0.09,
+      "status": "same",
+      "severity": "ok"
+    },
+    {
+      "metric": "warnings",
+      "baseline": 0,
+      "current": 0,
+      "delta": 0,
+      "status": "same",
+      "severity": "ok"
+    },
+    {
+      "metric": "qa_errors",
+      "baseline": 0,
+      "current": 0,
+      "delta": 0,
+      "status": "same",
+      "severity": "ok"
+    },
+    {
+      "metric": "qa_warnings",
+      "baseline": 0,
+      "current": 0,
+      "delta": 0,
+      "status": "same",
+      "severity": "ok"
+    },
+    {
+      "metric": "clip_identity_mismatches",
+      "baseline": 0,
+      "current": 0,
+      "delta": 0,
+      "status": "same",
+      "severity": "ok"
+    }
+  ],
+  "pass": true,
+  "regressions": 0,
+  "elapsed_sec": 34.7
+}
