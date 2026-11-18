@@ -36,8 +36,9 @@ import tempfile
 import time
 from pathlib import Path
 
-from ..context import (DEFAULT_CONFIG, OUTPUT_DIR, load_config, repo_path,
-                       resolve_sku_dir)
+from ..context import (DEFAULT_CONFIG, load_config, repo_path,
+                       resolve_sku_dir, stage_dir)
+from ..domain import encode
 
 DEFAULTS = {
     "lut": None,
@@ -184,10 +185,11 @@ def secondary_graph(spec: dict) -> tuple[str, int]:
     return ";".join(graph), len(seconds)
 
 
-def render(spec: dict, out: Path) -> dict:
+def render(spec: dict, out: Path, cfg: dict | None = None) -> dict:
     errors = validate(spec)
     if errors:
         sys.exit("[grade] invalid spec: " + "; ".join(errors))
+    cfg = cfg or load_config(DEFAULT_CONFIG)
     src = _resolve(spec["input"])
     out.parent.mkdir(parents=True, exist_ok=True)
     chain, notes = filter_chain(spec, _duration(src))
@@ -196,15 +198,13 @@ def render(spec: dict, out: Path) -> dict:
         graph = f"{pre};[g{n_sec - 1}]{chain}[vout]"
         cmd = ["ffmpeg", "-y", "-v", "error", "-i", str(src),
                "-filter_complex", graph, "-map", "[vout]", "-map", "0:a?",
-               "-c:v", "libx264", "-preset", "medium", "-crf", "18",
-               "-pix_fmt", "yuv420p", "-c:a", "copy",
-               "-movflags", "+faststart", str(out)]
+               *encode.video_args(cfg), *encode.audio_args(cfg),
+               str(out)]
         notes["secondaries"] = n_sec
     else:
         cmd = ["ffmpeg", "-y", "-v", "error", "-i", str(src),
-               "-vf", chain, "-c:v", "libx264", "-preset", "medium",
-               "-crf", "18", "-pix_fmt", "yuv420p", "-c:a", "copy",
-               "-movflags", "+faststart", str(out)]
+               "-vf", chain, *encode.video_args(cfg),
+               *encode.audio_args(cfg), str(out)]
     started = time.time()
     proc = subprocess.run(cmd, capture_output=True, text=True)
     if proc.returncode != 0:
@@ -246,12 +246,13 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     project_dir = resolve_sku_dir(args.project)
+    cfg = load_config(DEFAULT_CONFIG, project=project_dir)
     spec_path = args.spec or (project_dir / "grade.json")
     spec = _load(spec_path)
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    run = OUTPUT_DIR / project_dir.name / "grade" / f"{project_dir.name}_{stamp}"
+    run = stage_dir(project_dir, "grade") / f"{project_dir.name}_{stamp}"
     out = args.out or (run / "graded.mp4")
-    data = render(spec, out)
+    data = render(spec, out, cfg)
     run.mkdir(parents=True, exist_ok=True)
     (run / "grade.json").write_text(json.dumps(spec, indent=2), encoding="utf-8")
     (run / "manifest.json").write_text(json.dumps(data, indent=2), encoding="utf-8")
