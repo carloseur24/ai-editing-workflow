@@ -1,0 +1,3 @@
+{"provider": "auto", "text": "Escribe aquí el guion.", "voice_id": "",
+ "openai_voice": "alloy", "model_id": "eleven_multilingual_v2",
+ "stability": 0.45, "similarity": 0.75, "speed": 1.08, "out": "voice.mp3"}
