@@ -31,7 +31,8 @@ from pathlib import Path
 
 from ..context import DEFAULT_CONFIG, artifact, load_config, resolve_sku_dir
 from ..domain import candidates as cand_mod
-from ..domain.quality import cached_scan, frame_sharpness, window_stats
+from ..domain.quality import (cached_scan, frame_sharpness, picture_driven,
+                              probe_duration, window_stats)
 from .beat_grid import load_grid, nearest_beat
 
 DEFAULTS = {
@@ -48,14 +49,7 @@ def quality_cfg(cfg: dict) -> dict:
 
 
 def clip_duration(path: Path) -> float:
-    import cv2
-    cap = cv2.VideoCapture(str(path))
-    try:
-        fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
-        frames = cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0.0
-        return float(frames / fps) if fps else 0.0
-    finally:
-        cap.release()
+    return probe_duration(path)
 
 
 def row(rid: str, measured, threshold, ok: bool, fix: str,
@@ -124,7 +118,7 @@ def validate(sku_dir: Path, cfg: dict) -> dict:
         if clip not in durations:
             unknown.append((i, clip))
             continue
-        if in_pt < 0 or in_pt + dur > durations[clip] - 0.02:
+        if in_pt < 0 or in_pt + dur > durations[clip] + 0.02:
             out_of_range.append((i, clip, in_pt, dur, durations[clip]))
         if dur < float(cfg.get("min_cut_sec", 1.2)) - 1e-6:
             too_short.append((i, round(dur, 2)))
@@ -230,23 +224,40 @@ def validate(sku_dir: Path, cfg: dict) -> dict:
 
     # beat alignment, when a measured grid exists
     grid = load_grid(sku_dir)
+    picture_policy = picture_driven({"quality": q})
     if grid and grid.get("beats"):
         offsets = [abs(nearest_beat(c["t0"], grid["beats"])[1]) for c in cuts]
         worst = max(offsets) if offsets else 0.0
-        rows.append(row(
-            "beat_offset", f"max {worst:.0f} ms, mean {sum(offsets)/len(offsets):.0f} ms",
-            f"<= {q['beat_offset_fail_ms']:.0f} ms hard, "
-            f"{q['beat_offset_warn_ms']:.0f} ms warn",
-            worst <= q["beat_offset_fail_ms"],
-            f"the nearest cut is {worst:.0f} ms off the measured grid "
-            f"({grid['bpm']:.2f} BPM); move cut times onto beat_grid.json "
-            f"beats or accept the drift", "error"))
-        rows.append(row(
-            "beat_offset_warn", f"{sum(o > q['beat_offset_warn_ms'] for o in offsets)}"
-            f"/{len(offsets)} cuts > {q['beat_offset_warn_ms']:.0f} ms",
-            f"all <= {q['beat_offset_warn_ms']:.0f} ms",
-            not any(o > q["beat_offset_warn_ms"] for o in offsets),
-            "snap each cut to the nearest measured beat", "warn"))
+        if picture_policy:
+            # Cinematic long takes cut on action. The offsets are still
+            # measured and reported, but they cannot fail the plan.
+            rows.append(row(
+                "beat_offset",
+                f"max {worst:.0f} ms (picture-driven: informational)",
+                "quality.beat_policy = picture", True,
+                "cuts follow the picture; set quality.beat_policy = music for "
+                "a beat-cut piece", "info"))
+            rows.append(row(
+                "beat_offset_warn",
+                f"{sum(o > q['beat_offset_warn_ms'] for o in offsets)}/"
+                f"{len(offsets)} cuts > {q['beat_offset_warn_ms']:.0f} ms "
+                f"(picture-driven: informational)",
+                "quality.beat_policy = picture", True, "", "info"))
+        else:
+            rows.append(row(
+                "beat_offset", f"max {worst:.0f} ms, mean {sum(offsets)/len(offsets):.0f} ms",
+                f"<= {q['beat_offset_fail_ms']:.0f} ms hard, "
+                f"{q['beat_offset_warn_ms']:.0f} ms warn",
+                worst <= q["beat_offset_fail_ms"],
+                f"the nearest cut is {worst:.0f} ms off the measured grid "
+                f"({grid['bpm']:.2f} BPM); move cut times onto beat_grid.json "
+                f"beats or accept the drift", "error"))
+            rows.append(row(
+                "beat_offset_warn", f"{sum(o > q['beat_offset_warn_ms'] for o in offsets)}"
+                f"/{len(offsets)} cuts > {q['beat_offset_warn_ms']:.0f} ms",
+                f"all <= {q['beat_offset_warn_ms']:.0f} ms",
+                not any(o > q["beat_offset_warn_ms"] for o in offsets),
+                "snap each cut to the nearest measured beat", "warn"))
     else:
         rows.append(row("beat_offset", "no beat_grid.json",
                         "measured grid available", True,
@@ -293,7 +304,7 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     sku_dir = resolve_sku_dir(args.sku_dir)
-    cfg = load_config(args.config)
+    cfg = load_config(args.config, project=sku_dir)
     report = validate(sku_dir, cfg)
     if args.strict:
         report["pass"] = all(r["pass"] for r in report["checks"])
