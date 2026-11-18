@@ -1,0 +1,173 @@
+{
+  "basic": {
+    "title": "Rendering Engine Performance and Output",
+    "domain": "Rendering engine",
+    "one_liner": "Headless Chrome seeks and captures each frame, FFmpeg encodes it: configurable fps, supersampling, H.264/H.265/VP9/ProRes, alpha, audio mux and worker-parallel capture.",
+    "official_sources": [
+      "https://github.com/heygen-com/hyperframes",
+      "https://hyperframes.heygen.com/guides/rendering",
+      "https://hyperframes.heygen.com/guides/performance",
+      "https://hyperframes.heygen.com/guides/4k-rendering",
+      "https://hyperframes.heygen.com/concepts/determinism",
+      "https://hyperframes.heygen.com/packages/cli",
+      "https://hyperframes.heygen.com/packages/engine",
+      "https://hyperframes.heygen.com/packages/producer",
+      "https://hyperframes.heygen.com/help"
+    ],
+    "maturity": "stable",
+    "last_verified": "2026-11-15"
+  },
+  "capabilities": {
+    "what_it_enables": "It turns a composition into a deliverable file with production-grade controls: 1-240 fps (including NTSC rationals), resolution presets that supersample through Chrome's deviceScaleFactor while the composition stays authored at one size, six output containers (MP4, WebM, MOV, GIF, PNG sequence, HLS), CRF or bitrate targeting, keyframe-interval and peak-bitrate caps, 4:4:4 colour for text-heavy masters, HDR10, alpha for overlays, AAC/Opus audio, Partial-range renders, stills, and a Docker path for cross-machine reproducibility.",
+    "key_features": [
+      "Capture model: the engine never plays the video. For each frame it computes `time = floor(frame) / fps` with integer math, seeks every registered timeline to that time, and captures with Chrome's `HeadlessExperimental.beginFrame` (atomic, no half-painted frames) on a pinned `chrome-headless-shell`, falling back to `Page.captureScreenshot` where BeginFrame is unavailable.",
+      "Frame parallelism: `--workers` takes 1-24 (each worker is a separate Chrome process, roughly 256 MB); `auto` resolves to `max(6, min(16, floor(cpuCores / 8)))`. Parallelism only engages above `minParallelFrames` (120) and each worker needs at least 30 frames, with `coresPerWorker` defaulting to 2.5.",
+      "fps: 1-240, integer (24, 25, 30, 50, 60, 120, 240) or ffmpeg rationals (30000/1001, 24000/1001, 60000/1001). Default is the root `data-fps`, else 30.",
+      "Resolution: `--resolution` presets (landscape/portrait/square at 1080, 1440p and 4K) are applied by raising Chrome's `deviceScaleFactor`, not by re-authoring: the composition keeps its layout and is captured at the requested pixel size. Constraints: same aspect ratio, integer multiple, never smaller than the composition, MP4 only, never with `--hdr`.",
+      "Encoding tiers: `draft` = libx264 ultrafast at CRF 28; `standard` = medium at CRF 18; `high` (= `delivery`) = fast at CRF 15; the default `looks` tier is `standard` with CRF 16. `--crf 0-51` and `--video-bitrate` override and are mutually exclusive; both are rejected for MOV.",
+      "Delivery controls on MP4: `--keyframe-interval <s>` forces a keyframe at least every N seconds (locks the GOP, needed for `-c copy` segmenting), `--max-bitrate 8M` caps the peak while the quality target still decides the rest, `--buffer-size` (default 2x the cap) sets the measurement window.",
+      "Colour: 4:2:0 by default; `--chroma-subsampling 444` encodes H.264 High 4:4:4 Predictive (yuv444p) and switches frame capture to lossless PNG. SDR MP4 + software encoder only; rejected with `--gpu`, `--hdr`, other formats and distributed renders.",
+      "Alpha: `--format webm` (VP9 with `yuva420p`, `-auto-alt-ref 0`, `alpha_mode=1`) or `--format mov` (ProRes 4444) or `--format png-sequence` (RGBA frames). MP4 carries no alpha. Transparency only survives where the composition paints nothing.",
+      "Audio: all `<audio>`/`<video>` tracks are mixed to 48 kHz PCM, then encoded AAC 192 kbps for MP4/MOV or libopus 128 kbps for WebM, and muxed; GIF and PNG sequence carry no audio.",
+      "HDR: HDR10 MP4 (H.265 10-bit, BT.2020, PQ or HLG) chosen automatically when the composition references HDR media (BT.2020 PQ/HLG video or 16-bit PNG) with `--hdr`/`--sdr` to force either path; not available on Lambda, not combinable with 4K supersampling.",
+      "Partial range: `--start <s>` / `--end <s>` render only that span as an MP4 that starts at 0 and carries the span's audio. MP4 only, SDR only, integer fps of 24/25/30/60 only.",
+      "Stills: `npx hyperframes snapshot` captures PNG stills at `--at` timestamps, `--frames N` evenly spaced, `--range start,end`, or per-sub-composition; `--zoom` crops with a raised device scale factor, `--against` pairs each still with the same frame of a reference video, `--review` builds beat/seam contact sheets. `--format png-sequence` writes every frame as RGBA PNG.",
+      "Docker: `--docker` builds and runs a local `hyperframes-renderer:<cli-version>` image from the bundled `Dockerfile.render` (per-arch tag `-arm64` on Apple Silicon), with `--shm-size=2g`, the project mounted read-only at `/project` and the output directory writable at `/output`, plus `--gpus all` when `--gpu` is set.",
+      "GPU: `--gpu` selects a hardware FFmpeg encoder (NVENC, VideoToolbox, AMF, VAAPI, QSV) while `--browser-gpu` selects host GPU acceleration for Chrome/WebGL capture; both are independent of the CPU-side parallelism and of each other.",
+      "Determinism: identical input yields identical frames; worker count, chunk boundaries and seek order do not change pixels (motion blur is the stated exception, because it samples sub-frame times). Docker pins Chromium, fonts and the FFmpeg encoder so the platform stops being an input."
+    ],
+    "technical_mechanism": "Puppeteer (~25.13.0) drives a pinned `chrome-headless-shell` downloaded into `~/.cache/hyperframes/chrome`. The producer bundles the project, serves it from a local file server, opens the entry HTML, waits for the `__playerReady`/`__renderReady` gates, then per frame: sets the frame clock, calls the frame adapters' `seekFrame`, and captures. Capture has three paths - `HeadlessExperimental.beginFrame` (default), `Page.captureScreenshot` (fallback / forced with `--force-screenshot`), and an experimental `drawElementImage` fast path (macOS/Windows with a hardware-GPU browser only, ~2x faster, with an in-page OffscreenCanvas worker that encodes frame N while the main thread paints frame N+1). Source videos are pre-extracted to image frames with FFmpeg and injected as `<img>` elements so video decode never depends on wall-clock playback; that extraction is content-addressed and cached. Captured frames go either to a disk directory (JPEG by default, PNG for alpha/444) that FFmpeg reads, or straight into a streaming FFmpeg stdin (single-worker renders). FFmpeg encodes with libx264/libx265/VP9/ProRes, applies the colour conversion to tagged BT.709, then muxes the mixed AAC/Opus audio and writes container metadata naming the renderer and version.",
+    "text_and_motion_capabilities": "Per-frame seeking means a render never drops or duplicates a frame: a composition that stutters in real-time preview still renders every frame exactly, and 60 fps is simply twice as many captured frames, not a different playback engine. Text sharpness is a render decision, not a typographic one: default capture is JPEG at 4:2:0, so thin coloured glyphs can fringe; `--chroma-subsampling 444` captures lossless PNG and encodes yuv444p, which the docs measure as about +16 dB chroma PSNR on coloured text (and about 2x the render time for text/UI, 3.5x for full-frame footage). Supersampling via `--resolution` re-rasterizes HTML text, SVG and CSS at the higher DPR, but cannot add detail to a 1080p `<video>`, a fixed-size `<canvas>` or a sub-4K image. Motion blur is not free temporal integration: the engine captures one instant per frame, so blur must be authored (the catalog's motion-blur component integrates a shutter window by sampling the timeline at sub-frame times) or injected per page. Easing and per-word/per-glyph control come from the animation layer (GSAP timelines seeked by the engine), not from the encoder.",
+    "output_formats": [
+      "MP4 - H.264 (4:2:0 default, 4:4:4 optional) or H.265 (HDR10, hvc1 tag); AAC 192 kbps audio; `+faststart` on the muxed MP4; renderer/version container tags.",
+      "WebM - VP9, with alpha when the composition leaves the background unpainted (yuva420p + alpha_mode=1); libopus 128 kbps audio; `--vp9-cpu-used -8..8` trades speed for size.",
+      "MOV - ProRes 4444 with alpha by default, or `--prores-profile hq|422|lt|proxy` for a smaller 4:2:2 file with no alpha (transparent areas render black). No CRF/bitrate controls.",
+      "PNG sequence - lossless RGBA frames in a directory, for AE/Nuke/Fusion. Largest output by far.",
+      "GIF - no audio, 30 fps cap (60 fps option disabled for GIF), `--gif-loop 0-65535`, best around 15 fps.",
+      "HLS - VOD playlist directory (`master.m3u8`, `video.m3u8`, `video_NNNNN.ts`, plus audio playlists when there is audio); identical encodes to MP4, packaged by stream copy; SDR only, `--gpu` rejected, segment length `--hls-segment-seconds` 1-60 (default 4).",
+      "Stills - PNG via `snapshot` (default 1920x1080 unless the composition says otherwise), with optional zoom crops, reference pairing and review contact sheets."
+    ]
+  },
+  "api": {
+    "setup_and_install": "Node.js 22+, FFmpeg and FFprobe on PATH, and a Chrome the CLI can launch (it downloads a pinned `chrome-headless-shell` into `~/.cache/hyperframes/chrome` on first use). No project install is required:\n\n```bash\nnpx hyperframes doctor            # verifies node, ffmpeg, ffprobe, chrome, docker, disk\nnpx hyperframes render --output final.mp4\nnpx hyperframes render --docker --output final.mp4   # reproducible path\n```\n",
+    "minimal_code_example": "```bash\n# vertical 28 s reel, 60 fps, delivery quality\nnpx hyperframes render \\\n  --resolution portrait \\\n  --fps 60 \\\n  --quality delivery \\\n  --output reel.mp4\n\n# transparent overlay for compositing, partial range\nnpx hyperframes render --format webm --fps 60 --start 3 --end 8 --output overlay.webm\n\n# stills for QA\nnpx hyperframes snapshot . --at 2.0,14.5,27.0 --review --json\n```\n\n```ts\n// programmatic (Node)\nimport { createRenderJob, executeRenderJob } from \"@hyperframes/producer\";\nconst job = createRenderJob({\n  projectDir: \"./reel\",\n  outputPath: \"./out/reel.mp4\",\n  fps: { num: 60, den: 1 },\n  quality: \"high\",\n});\nawait executeRenderJob(job, { onProgress: (p) => console.log(p) });\n```",
+    "cli_or_api_surface": [
+      "`hyperframes render [dir]` with `--output/-o`, `--composition/-c`, `--fps/-f`, `--quality/-q`, `--format`, `--resolution`, `--crf`, `--video-bitrate`, `--max-bitrate`, `--buffer-size`, `--keyframe-interval`, `--chroma-subsampling`, `--prores-profile`, `--vp9-cpu-used`, `--gif-loop`, `--hls-segment-seconds`, `--video-frame-format`, `--page-motion-blur`, `--start`, `--end`.",
+      "Machine/cost flags: `--workers/-w`, `--low-memory-mode`, `--gpu`, `--browser-gpu`, `--page-side-compositing`, `--experimental-fast-capture`, `--frames-cache-dir`, `--max-concurrent-renders`, `--docker`, `--wait`.",
+      "Gate flags: `--strict`, `--strict-all`, `--best-effort/--no-best-effort`, `--strict-variables`, `--resume`, `--keep-segments`, `--debug`, `--quiet`, `--json`.",
+      "`hyperframes benchmark [dir]` - renders five preset configurations (30 fps draft/standard/high at 2 workers, 30 fps standard at 4 workers, 60 fps standard at 4 workers), `--runs 1-20` (default 3), `--json`; the empirical way to get this machine's numbers.",
+      "`hyperframes snapshot [dir]` - `--at`, `--frames`, `--range`, `--composition`, `--output`, `--end/--no-end`, `--keep`, `--zoom`, `--zoom-scale`, `--angle`, `--against`, `--review`, `--describe`, `--json`.",
+      "`hyperframes doctor --json` - reports node/CPU/memory/disk, the frames cache location and free space, ffmpeg/ffprobe, Chrome, Docker, and an `ok` boolean; exits 0 whenever it ran, so CI gates on `.ok`.",
+      "`@hyperframes/producer` API: `createRenderJob`, `executeRenderJob`, `RenderConfig`, `RenderJob`, `RenderOutcome`, `ProgressCallback`, `RenderPerfSummary`, plus lower-level `createCaptureSession`, `initializeSession`, `captureFrame`, `captureFrameToBuffer`, `getCompositionDuration`, `getCapturePerfSummary`.",
+      "`@hyperframes/producer` distributed API: `createRenderRequest`, `parseRenderRequest`, `renderConfigFromRequest`, `serializeRenderRequest`, `renderSpan` / `spanFrameRange` (used by Lambda and Cloud Run).",
+      "`@hyperframes/engine` config type `EngineConfig` (fps, quality, format, jpegQuality, concurrency, coresPerWorker, browserGpuMode, useDrawElement, enableDrawElementWorkerEncode, enablePageSideCompositing, streaming/chunked encode, timeouts, HDR, cache limits)."
+    ],
+    "key_config_options": [
+      "`fps` - default 30 (or the root `data-fps`); 1-240; rationals accepted.",
+      "`quality` - `draft` (ultrafast, CRF 28) / `standard` (medium, CRF 18) / `high` (fast, CRF 15); CLI default `looks` = standard + CRF 16.",
+      "`format` - `jpeg` (default, quality 80) or `png`; PNG is forced for alpha and for `--chroma-subsampling 444`.",
+      "`concurrency` / `--workers` - `auto` by default, resolved from CPU count (see key features); hard ceiling 24.",
+      "`coresPerWorker` - 2.5; `minParallelFrames` - 120; `largeRenderThreshold` - 1000 frames; minimum 30 frames per worker.",
+      "`browserGpuMode` - raw default `software` (SwiftShader, 'always works; ~5-50x slower than GPU'); the CLI default is `auto`, which probes WebGL once (one extra Chrome launch, ~1-2 s, cached) and falls back to software.",
+      "`forceScreenshot` - off; forces `Page.captureScreenshot` and skips BeginFrame.",
+      "`staticFrameDedup` - on; reuses byte-identical frames instead of re-seeking and re-screenshotting (screenshot capture mode only; kill switch `HF_STATIC_DEDUP=false`).",
+      "`useDrawElement` - on where it can engage (macOS/Windows + hardware GPU); kill switch `PRODUCER_EXPERIMENTAL_FAST_CAPTURE=false` or `--experimental-fast-capture=false`.",
+      "`enableDrawElementWorkerEncode` - on; in-page OffscreenCanvas JPEG encode on a worker, documented as a 1.65-1.96x wall-time speedup, macOS hardware GPU only (`HF_DE_WORKER_ENCODE=false` to disable).",
+      "`enablePageSideCompositing` - on; shader transitions blend in a page-side WebGL canvas instead of the Node-side layered blend, '~6x faster for SDR shader-transition renders'; mp4/hls/gif only.",
+      "`enableStreamingEncode` - on; frames go straight to an FFmpeg stdin for single-worker renders instead of a disk directory. `chunkSizeFrames` - 360 when chunked encoding is on (`enableChunkedEncode` - off).",
+      "`enableBrowserPool` - on, but disabled for every parallel worker (pages in one browser share six connections to the file server, and sharing also crashes BeginFrame).",
+      "`lowMemoryMode` - auto when host RAM <= 8192 MB (or `PRODUCER_LOW_MEMORY_MODE` / `--low-memory-mode`): one worker, screenshot capture, no calibration browser, no WorkerBrowserPool.",
+      "`frameDataUriCacheLimit` - 256 entries; `frameDataUriCacheBytesLimitMb` - 1500 MB, sized so a worker stays under a few GB even at 4K.",
+      "`extractCacheMaxBytes` - 2 GiB default soft budget for the content-addressed source-frame cache, with an LRU sweep after extraction.",
+      "Timeouts: `ffmpegEncodeTimeout` 600 s without a new frame, `ffmpegProcessTimeout` 300 s, `ffmpegStreamingTimeout` 600 s inactivity, `pageNavigationTimeout` 60 s, `protocolTimeout` 300 s, `playerReadyTimeout` 45 s, `renderReadyTimeout` 15 s.",
+      "`--max-concurrent-renders` - 2 (1-10) for the producer server; locally, one render at a time per user account via a lock file (`--wait` default, `HYPERFRAMES_RENDER_LOCK=off` to disable).",
+      "`--resolution` - deviceScaleFactor supersampling, not re-layout; `--start`/`--end` - MP4 + SDR + 24/25/30/60 fps only."
+    ]
+  },
+  "integration": {
+    "pipeline_fit": "Partially replaces and mostly augments. Today `render_video.py` does both the cut assembly and the text/motion overlay in one FFmpeg pass at 60 fps. HyperFrames is the better tool for the overlay half (seekable per-frame animation, real HTML text) and a *worse* tool for the beat-grid cut half (it renders one composition end to end and its own seek clock, not an FFmpeg concat of measured beats). The low-risk shape is hybrid: keep beat-snapped cuts, punch-in and the -14 LUFS audio bed in FFmpeg, and render transparent overlay segments (1080x1920, 60 fps, `--format webm` or `png-sequence`) from HyperFrames, composited per cut. A full replacement (HyperFrames renders the whole 28 s reel) is possible and simpler to reason about, but throws away the measured beat grid, the per-cut sharpness gate and the WhatsApp size guard unless they are re-implemented inside the composition.",
+    "python_integration": "Three viable contracts. (1) CLI + subprocess: `subprocess.run([\"npx\",\"--yes\",\"hyperframes\",\"render\",...])` with `--json` for machine-readable results and `_meta` (cli version, updateAvailable) in the payload; progress goes to stderr, so read stdout as JSON only. Exit codes matter (2 = usage/mistyped flag; non-zero with an error envelope otherwise). (2) Node bridge: a small `render.mjs` that imports `@hyperframes/producer` (`createRenderJob`/`executeRenderJob`) and emits newline-delimited JSON progress on stdout, called from Python with `subprocess.Popen` and parsed line by line - this is the only way to get per-frame progress and `RenderPerfSummary` as structured data. (3) File contract: Python generates the composition HTML + a variables JSON, invokes the CLI, then inspects the produced file with ffprobe (duration, fps, pix_fmt, alpha_mode) and with `snapshot` stills. Caveats: npx cold start and Chrome download on first run; each worker is a Chrome (~256 MB) so a 16 GB box should stay at 2-4 workers; a local render takes an exclusive per-account lock, so parallel SKU renders queue unless `HYPERFRAMES_RENDER_LOCK=off`; and on WSL2 Chrome usually cannot reach the GPU, so expect software WebGL.",
+    "data_injection": "Per-render data goes in as (a) `--variables '<json>'` / `--variables-file` / `--batch <rows.json>`, merged over the composition's `data-composition-variables` defaults and read inside with `window.__hyperframes.getVariables()`; (b) `--strict-variables` to fail instead of warn on undeclared or mistyped keys; (c) plain generation - text, prices and word timings written into the HTML before render, which is the only path for per-word caption timing arrays. `--batch` renders one output per variable row, which is the natural fit for a SKU catalogue.",
+    "footage_and_asset_handling": "Existing MP4 footage is consumed as `<video class=\"clip\" data-start data-duration data-track-index src>`, but not decoded during capture: the engine pre-extracts each source video's frames with FFmpeg and swaps in `<img>` elements, caching the result content-addressed (2 GiB default budget) keyed on path, mtime, size, mediaStart, duration, fps and format. Extraction format is `auto|jpg|png` (`--video-frame-format`), forcing PNG for UI recordings and for any alpha-capable source. Audio beds are ordinary `<audio data-start data-duration data-volume>` elements mixed to 48 kHz PCM before AAC/Opus. Fonts are local files or @font-face URLs localized to same-origin before capture; remote images/videos/audio are localized the same way. Implication for this pipeline: a 28 s 60 fps reel built from 16 source clips costs a one-time extraction pass per clip (cached across renders), and the cache directory needs real disk headroom.",
+    "migration_effort": "medium",
+    "integration_steps": [
+      "Run `npx hyperframes doctor --json` on the WSL2 box and record the `ok` payload, the frames-cache free space and whether Chrome reports a hardware GPU.",
+      "Prototype one SKU: generate a 1080x1920@60 composition from the existing `sku.json` fields (title, price, badges, footer) with no footage, and render it with `--quality draft`. Measure wall time and compare against the current 3 min render.",
+      "Add the real footage as `<video>` clips with the same in/out points the edit plan already computes, and confirm extraction cost and cache behaviour (`--frames-cache-dir`) on a second render.",
+      "Render a 3 s overlay as `--format webm` and verify alpha end to end (`ffprobe` shows `alpha_mode=1`, and an extracted frame over a checkerboard is transparent).",
+      "Composite the overlay onto the existing beat-snapped cut with one FFmpeg filter graph and compare the result frame by frame against the current renderer's output at the same timestamps.",
+      "Decide the split: overlays-only (recommended first) versus whole-reel rendering. Record the decision with measured numbers per render.",
+      "Wrap the winner in Python (`subprocess` + `--json`, or a Node bridge for progress), add a timeout, parse the error envelope, and assert output duration/fps/size before the SKU is allowed to ship.",
+      "Add a QA gate that reruns `snapshot --at` on the key beats and fails on a blank or clipped frame, mirroring the existing `qa_check.py --strict` contract.",
+      "Pin the CLI version (`hyperframes@x.y.z`) in the pipeline so an upgrade cannot silently change encoder defaults (CRF, preset) between deliveries."
+    ]
+  },
+  "constraints": {
+    "requirements": [
+      "Node.js 22+ (repo badge: node >= 22) and npm/npx.",
+      "FFmpeg and FFprobe on PATH. No explicit minimum version is documented; `doctor` reports the installed one and its sample output shows FFmpeg 7.x. [uncertain]",
+      "A Chrome/Chromium build: the CLI downloads a pinned `chrome-headless-shell` into `~/.cache/hyperframes/chrome` per platform (darwin arm64/x64, linux x64, win32 ia32/x64).",
+      "Disk: a render work directory for captured frames plus a content-addressed extraction cache (2 GiB default budget) under `<tmpdir>/hyperframes-extract-cache-<uid>`; `doctor` fails the frames-cache row under 2 GB free.",
+      "RAM: each Chrome worker is roughly 256 MB; <= 8 GB total RAM flips the low-memory profile automatically (1 worker, screenshot capture).",
+      "Docker (optional): `--docker` needs a working daemon; it builds `hyperframes-renderer:<version>` per architecture and runs with `--shm-size=2g`.",
+      "Linux sandbox: Chrome keeps its sandbox for non-root users outside containers; it runs without one as root, in Docker/Podman/Kubernetes, on Lambda and Cloud Run, and where unprivileged user namespaces are restricted (Ubuntu 23.10+). `HYPERFRAMES_CHROME_SANDBOX=0|1` forces the choice.",
+      "WSL2: headless Chrome often cannot reach the GPU, so WebGL falls back to SwiftShader ('several times slower on a long or effect-heavy video'); the render log says so explicitly."
+    ],
+    "limitations": [
+      "No temporal motion blur from the encoder: one instant is captured per frame. Any blur must be authored in the composition (the catalog's motion-blur component samples the timeline at sub-frame times and averages copies) and that component is the stated determinism exception.",
+      "Default capture is JPEG at 4:2:0, so thin coloured text and saturated UI edges can fringe until you pay for `--chroma-subsampling 444` (about 2x render time for text/UI, 3.5x for footage) - and many players cannot decode 4:4:4.",
+      "60 fps doubles the frames the engine must seek, capture and encode; 4K superampling is roughly 4x slower per frame and 3-5x larger on disk. Neither is 'free detail' for content locked to a pixel grid.",
+      "Renders are serialised per user account: a second local or `--docker` render waits for the first (`--wait` default) because side-by-side renders starve each other. `--workers` only sets parallelism *inside* one render.",
+      "Source video is pre-extracted to image frames, so footage-heavy compositions pay a large fixed extraction cost and need real disk headroom; the extraction cache is the mitigation, not a fix for a cold first render.",
+      "`--start`/`--end` is restricted to MP4, SDR, and integer 24/25/30/60 fps; it is not a general ranged render.",
+      "`--resolution` refuses anything but MP4, forbids HDR, and requires an exact aspect-ratio match and integer upscale - a 1080x1920 composition cannot be rendered to a 1440x2560 preset.",
+      "Alpha exists only in webm/mov/png-sequence, and only where the composition paints nothing; an opaque `html`/`body` background is encoded as visible pixels, so a full-bleed reel has nothing to gain from a transparent format.",
+      "Local renders can differ by a pixel between machines (font versions, Chrome version). Only the Docker path pins Chromium, fonts and FFmpeg.",
+      "The page-side WebGL compositing path is f32, not f64, so byte-equality baselines do not apply to it; its correctness pin is PSNR-based instead.",
+      "One render at a time, plus a 45 s player-ready budget and a 60 s navigation budget, means very heavy compositions fail rather than wait unless the timeouts are raised."
+    ],
+    "known_issues": [
+      "#4060 [Windows] disk-capture headroom gate: the pre-render estimate bills uncompressed RGBA (`frames x width x height x 4`) while frames are written as JPEG/PNG, so an ordinary ~44 s 1080p30 export was estimated at ~11 GB (actual footprint of a few hundred MB) and refused; 5 minutes of 1080p30 estimated ~60 GB. Measured 1080p JPEG captures land at ~150-400 KB per frame, roughly 1/20 to 1/30 of the estimate.",
+      "#7370 each worker re-verifies static-frame dedup for the whole timeline, slowing parallel renders.",
+      "#6096 no GPU video decode on Linux (NVDEC): extraction of 4K sources runs entirely on CPU.",
+      "#6530 macOS XProtect can block `hyperframes render` mid-'Compiling composition'.",
+      "Issue #1199 is the reason `--browser-timeout` exists: heavy compositions (many videos, fonts, asset requests) blow past the 60 s navigation budget on a cold cache.",
+      "Sandboxed Linux Chrome launches fail on distributions that restrict unprivileged user namespaces (Ubuntu 23.10+); the render warns and continues without the sandbox unless `HYPERFRAMES_CHROME_SANDBOX=1`.",
+      "Low-memory detection reads host RAM, not cgroup/container limits, so containerised callers (including `--docker`) must set `PRODUCER_LOW_MEMORY_MODE` explicitly."
+    ],
+    "performance_and_cost": "Documented numbers, with conditions: workers each cost ~256 MB of RAM and `auto` picks `max(6, min(16, floor(cores/8)))`, so a 16-core box gets 6 and a 64-core box 8; `--experimental-fast-capture` is quoted at ~2x faster where it engages (macOS/Windows + hardware GPU) and its in-page encode worker at 1.65-1.96x wall time; page-side shader compositing is quoted at ~6x faster for SDR shader-transition renders; 4K is ~4x slower per frame with a 3-5x larger file; 4:4:4 costs ~2x (text/UI) to ~3.5x (footage) render time; software WebGL (SwiftShader) is described as 5-50x slower than GPU. The performance guide's own demo measures 300 frames at 1920x1080 at 25.0 s against 9.8 s (median of three runs), though the page does not say which stage was timed, so treat it as soft evidence. Disk: measured 1080p JPEG capture is ~150-400 KB per frame (issue #4060), which implies roughly 250-670 MB of frame data for a 28 s 60 fps reel - a derived figure, not a published one; the extraction cache defaults to a 2 GiB budget, the frame data-URI cache to 1500 MB / 256 entries. NOT MEASURED ANYWHERE IN THE DOCS: a render-time benchmark at 1080x1920@60 fps specifically. The only first-party way to get that number on this machine is `npx hyperframes benchmark` (which includes a 60 fps / standard / 4-worker configuration) or a timed draft render of the actual composition.",
+    "licensing": "Apache-2.0 for the engine, CLI, producer and all packages; no per-render fees, no commercial-use threshold, no watermark. Rendering is free locally and in your own Docker. Paid boundaries are around the hosted paths, not the renderer: AWS Lambda / Cloud Run rendering bills AWS/GCP compute for the fan-out, and HyperFrames Studio Pro bundles HeyGen's video/image/voice/music models. Rendered MP4s carry two unsigned container tags (`hyperframes_renderer`, `hyperframes_version`) and nothing else - no paths, usernames or project data - and they can be stripped with `ffmpeg -map_metadata -1 -c copy`; they are a diagnostic hint, not an authenticity or licensing control."
+  },
+  "evidence": {
+    "confidence": 0.82,
+    "sources": [
+      "https://hyperframes.heygen.com/guides/rendering - format matrix, quality tiers (default `looks` = CRF 16), `--resolution` behaviour, 4:4:4 measurements (~2x text/UI, 3.5x footage, +16 dB text chroma PSNR, player support table), transparent video rules, HLS rules, render provenance tags, Docker vs local, the '4K ~4x slower per frame / 3-5x larger file' and '60 fps doubles frames' statements.",
+      "https://hyperframes.heygen.com/guides/performance - the 300-frame 1920x1080 25.0 s vs 9.8 s demo (median of three), expensive-browser-work guidance, `--quality draft` review renders, VP9 `--vp9-cpu-used`.",
+      "https://hyperframes.heygen.com/guides/4k-rendering - supersampling semantics, per-content sharpness table, and the full constraint list (aspect ratio, integer multiple, MP4 only, no HDR).",
+      "https://hyperframes.heygen.com/concepts/determinism - the frame clock (`time = floor(frame)/fps`), BeginFrame atomic capture, 'worker count, chunk boundaries and seek order don't change pixels' with motion blur as the exception, and Docker as the cross-machine pin.",
+      "https://hyperframes.heygen.com/packages/cli - the full render flag table with defaults, including `--workers` 1-24 at ~256 MB each, `--low-memory-mode` auto at 8 GB, `--page-side-compositing` ~6x, `--experimental-fast-capture` ~2x, `--max-concurrent-renders` 2, the per-account render lock, HLS/GIF/PNG-sequence semantics, `snapshot` and `benchmark`.",
+      "Local clone of heygen-com/hyperframes @ main (2026-11-15): packages/engine/src/config.ts - `DEFAULT_CONFIG` (fps 30, quality standard, jpeg 80, concurrency auto, coresPerWorker 2.5, minParallelFrames 120, staticFrameDedup on, useDrawElement on, pageSideCompositing on, streaming encode on, chunkSizeFrames 360, all timeouts, cache budgets, the drawElement 1.65-1.96x and SwiftShader 5-50x comments).",
+      "Local clone: packages/engine/src/services/chunkEncoder.ts - `ENCODER_PRESETS` (draft ultrafast/28, standard medium/18, high fast/15), libx264/libx265 argument construction, `-bf 0` for h264, x264 aq-mode/colour params, `-tag:v hvc1` for HEVC, VP9 `yuva420p` + `alpha_mode=1`, ProRes 4444 `prores_ks`, AAC 192 kbps / libopus 128 kbps muxing.",
+      "Local clone: packages/engine/src/services/streamingEncoder.ts - the full per-encoder argument paths including NVENC/QSV/VAAPI/AMF/VideoToolbox rate control and the BT.709 tagging branch.",
+      "Local clone: packages/engine/src/services/parallelCoordinator.ts - `ABSOLUTE_MAX_WORKERS = 24`, `defaultSafeMaxWorkers()` = `max(6, min(16, floor(usableCpuCount()/8)))`, `MIN_FRAMES_PER_WORKER = 30`, one browser per parallel worker, and the measured Apple-GPU disk-capture heap notes.",
+      "Local clone: packages/engine/src/services/systemMemory.ts - `LOW_MEMORY_TOTAL_MB_THRESHOLD = 8192`.",
+      "Local clone: packages/engine/src/services/videoFrameExtractor.ts - 'Pre-extracts video frames using FFmpeg for frame-accurate rendering. Videos are replaced with <img> elements during capture.'",
+      "Local clone: packages/cli/src/utils/dockerRunArgs.ts and packages/cli/src/commands/render.ts - `hyperframes-renderer:<version>` (+`-arm64`), `--shm-size=2g`, read-only `/project`, writable `/output`, `--gpus all` with `--gpu`, and the platform resolution rules.",
+      "Local clone: packages/cli/src/commands/render.ts + render/plan.ts - `QUALITY_ALIASES` (`looks` = standard + CRF 16, `delivery` = high), and every render flag with its help text including `--start`/`--end` restrictions and `--resolution` presets.",
+      "https://github.com/heygen-com/hyperframes/issues/4060 - measured 1080p JPEG capture size (~150-400 KB/frame) and the RGBA disk-estimate failure mode.",
+      "GitHub issue search (2026-11-15) - #7370 static-frame dedup re-verification in parallel renders, #6096 no NVDEC on Linux, #6530 macOS XProtect blocking a render.",
+      "https://hyperframes.heygen.com/help - the WSL2 section: headless Chrome may not reach the GPU, software WebGL fallback, the `render` group fix and the 'render from Windows instead' workaround."
+    ],
+    "open_questions": [
+      "Actual wall-clock render time at 1080x1920@60 fps for a 28 s composition on this WSL2 machine, both with and without footage - unmeasured in every first-party doc and needs `hyperframes benchmark` plus a timed draft render.",
+      "How much of the render time is extraction versus capture versus encode for a 16-clip, 28 s reel; the docs give no per-stage breakdown.",
+      "Whether software WebGL (no GPU under WSL2) is fast enough for shader-transition overlays at 60 fps in this pipeline, or whether those must be rendered once and reused.",
+      "Whether a 60 fps 1080x1920 MP4 at delivery quality with `--chroma-subsampling 444` still fits the WhatsApp ~16 MB guardrail, which would need an FFmpeg re-encode anyway.",
+      "Whether the PNG-sequence or WebM-alpha overlay path composites more cheaply in the existing FFmpeg graph for 28 s of overlay.",
+      "Peak RAM for 4 workers at 60 fps on a 16 GB box, which the docs bound only by the ~256 MB-per-Chrome rule and the 8 GB low-memory threshold."
+    ]
+  },
+  "uncertain": [
+    "requirements"
+  ]
+}
