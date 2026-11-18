@@ -18,6 +18,12 @@ reconstruct this state, and do not start a render if `ready: no`. The full
 contract (including measured failure cases) is
 [job-contract.md](job-contract.md).
 
+If the piece needs a duration, cut count, beat policy, safe zone, audio bed or
+post choice that differs from the portable defaults, record only those keys in
+`input/<project>/config.json` and re-run `job`; the `config`/`params` lines must
+show them. The overlay is project intent, not a second global config. See
+[production-line.md](production-line.md).
+
 ## Before Phase 0 — footage intake (optional)
 
 If the clips arrive as a messy folder, run `fenix label` before naming the
@@ -54,6 +60,7 @@ a long script fit: the read becomes rushed and QA will show it in caption CPS.
 | tracked runtime assets | fonts, motion textures, `sfx/library.json`, GSAP | already in `assets/`; never edit per job |
 | local media | music bed, SFX samples, model weights | `assets/music/`, `assets/sfx/`, `.cache/` |
 | project inputs | clips, voice, specs | `input/<project>/` |
+| project config | a duration/cut/beat/audio/post value true only for this piece | `input/<project>/config.json` (sparse overlay, tracked) |
 
 If a music bed or SFX library is missing, ask the user for the file or run
 `./fenix sfx --install-library`; do not put a repo asset under `input/` and do not
@@ -145,8 +152,14 @@ transients and vacuumed before major flips. Re-run `fenix sfx` after any
 ## Phase 5 — render
 
 ```bash
+./fenix render <sku> --preview   # stills: cut midpoints + every card, 3–5 s
 ./fenix render <sku>
 ```
+
+Accept the preview first: one still per cut midpoint and per card, with the
+overlay, cards, captions and grade composited. Text placement, safe zones and
+which clip a cut shows are reviewable here without spending an encode. Previews
+live under `output/<sku>/preview/` and never enter `runs.json`.
 
 Accept: exit 0 and a new `output/<sku>/<sku>_<stamp>/` directory. A refused
 render (soft in-point, impossible cut) removes its own incomplete run; fix the
@@ -185,7 +198,10 @@ duration.
 
 ## Post-production paths
 
-These are assembly/finishing modes, not a creative re-edit. The spec-first rule
+These are assembly/finishing modes, not a creative re-edit. Preview a comp
+before encoding it (`fenix comp <p> --preview`, <10 s) and gate the master with
+the post profile (`fenix qa --post --latest <p>`); `fenix make <p> --post comp`
+runs the whole chain after strict edit QA. The spec-first rule
 is the same: author the JSON, validate, render, inspect the manifest/ffprobe.
 
 **Motion plate**
@@ -212,11 +228,15 @@ Accept: points have a useful match score; point a comp layer at the JSON with
 
 ```bash
 ./fenix track <project>
-./fenix comp <project> --deliver
+./fenix comp <project> --preview       # layer placement per base cut, <10 s
+./fenix comp <project> --deliver       # implies --reuse: unchanged -> copy
+./fenix qa --post --latest <project>   # post-master profile
 ```
 
 Accept: `comp/manifest.json` layer count matches the spec; the base and every
-layer resolve; watch the composite for edge/key artefacts.
+layer resolve; the preview shows the layer in the intended band; post QA passes
+(container, duration, audio, black frames, size, cut identity). A second
+`comp --deliver` is a ~0.5 s copy with no ffmpeg.
 
 **FX**
 
@@ -268,6 +288,7 @@ Full field tables: [specs.md](../reference/specs.md). These commands have no
 - [ ] `./fenix test` green.
 - [ ] `./fenix sfx <sku>` → `RESULT: PASS`; cue sheet has anticipation,
   tactile and impact layers and no stacked sub hits.
+- [ ] `./fenix render <sku> --preview` was reviewed (text/cards placement).
 - [ ] `./fenix qa --latest <sku> --strict` → `RESULT: PASS`, 0 warnings.
 - [ ] `./fenix eval <sku> --skip-align --skip-render` → no regression.
 - [ ] Contact sheet has no dark, blurry or wrong-product frame.
@@ -279,7 +300,9 @@ size, duration, alpha when requested).
 For **track**: points have a useful score and the comp consumes the JSON.
 For **fx**: spec valid, manifest written, seeds fixed, affected frames watched.
 For **comp / grade / longform**: spec valid, manifest written, `ffprobe`
-matches, and the result was watched; there is no 30-check QA gate.
+matches, and the result was watched. For a comp master also run
+`qa --post --latest <sku>` (container, duration, audio, black frames, size,
+cut identity); it has no 30-check edit gate.
 For **scopes**: the PNGs and `signalstats` were read; no deliver step.
 
 ## Delegation and context
