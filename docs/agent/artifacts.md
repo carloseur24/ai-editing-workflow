@@ -6,6 +6,7 @@ anything.
 | Class | Path | Rule |
 |---|---|---|
 | Source | `input/<sku>/` | human/agent intent + raw media; never overwrite generated files by hand |
+| Project config | `input/<sku>/config.json` | optional sparse overlay: project-only keys, deep-merged over global/local |
 | Derived | `output/<sku>/` | tool output; safe to delete and regenerate |
 | Runs | `output/<sku>/<sku>_<stamp>/` | immutable evidence for one render |
 | Runtime assets | `assets/fonts`, `assets/motion/*.png`, `assets/sfx/library.json`, `assets/hf` | tracked; read-only during a job |
@@ -21,6 +22,7 @@ The full asset inventory and missing-file behavior live in
 | File | Written by | Read by | Notes |
 |---|---|---|---|
 | `brief.json` | human / `fenix storyboard` | storyboard, agent | intake facts, format, framework, decisions; see [specs](../reference/specs.md) |
+| `config.json` | human/agent | every project-aware command | optional sparse pipeline overlay (duration, cuts, beat policy, safe zones, `post` flags); see [config](../reference/config.md#project-overlay-inputprojectconfigjson) |
 | `motion.json` | human/agent | `fenix motion` | plate spec; see [specs](../reference/specs.md) |
 | `track.json` | human/agent | `fenix track` | template-tracking spec; see [specs](../reference/specs.md) |
 | `comp.json` | human/agent | `fenix comp` | compositing spec; see [specs](../reference/specs.md) |
@@ -31,10 +33,10 @@ The full asset inventory and missing-file behavior live in
 | `tts.json` | human/agent | `fenix tts` | provider/text/voice spec; see [specs](../reference/specs.md) |
 | `clips/*.mp4` | human | frames, plan, render | vertical footage; 1080×1920 preferred |
 | `voice.mp3` | human / `fenix tts` | align | name must match `sku.json → voiceover`; `tts` is the only stage that writes into `input/` by design |
-| `sku.json` | human/agent | lint, align, plan, render, QA | copy, badges, price, footer, display maps |
-| `picks.json` | human/agent | plan | optional creative choice per line |
+| `sku.json` | human/agent | lint, align, plan, render, QA | copy, badges, price, footer, display maps, `voiceover`/`duration_sec`, `text_cards` |
+| `picks.json` | human/agent | plan | optional creative choice per line (ignored by a locked shot order) |
 | `candidates.json` | `fenix frames` | plan, validate, render | scored windows with stable IDs; do not hand-edit IDs |
-| `edit_plan.json` | `fenix plan` | validate, sfx, render | the cut contract; edit via `picks.json` when possible |
+| `edit_plan.json` | `fenix plan` (or hand-authored) | validate, sfx, render | the cut contract; `locked: true` means the order comes from `brief.story.shots`; a plan with cuts and no planner stamp is hand-locked and only `--force` replaces it |
 | `keyframes/` | `fenix frames` | agent review | 1 fps JPEGs + `keyframe_report.json` |
 | `word_timings.json` | `fenix align` | plan, sfx, render, QA | word-level timestamps + `source` voice/script fingerprint |
 | `voice_28s.wav` | `fenix align` | render | tempo-fitted voiceover |
@@ -61,6 +63,11 @@ The full asset inventory and missing-file behavior live in
 `display_map` splits/replaces one ASR token; `display_merge` joins two tokens.
 They change captions only — word timings stay intact.
 
+`voiceover: null` (or `"none"`) is a music-only piece: no `voice_28s.wav`, no
+`word_timings.json`, no captions; the length comes from `sku.duration_sec` →
+`brief.duration_sec` → config. `text_cards[]` are native timed title/spec cards
+drawn by the edit renderer (title white, spec mint) — no motion plate or comp.
+
 `edit_plan.json` also carries `config_slices` (`picture`/`audio` digests). The
 renderer writes them into the run, and `fenix make` uses them to choose a full
 render vs an audio-only remix without guessing from the whole config mtime.
@@ -69,8 +76,11 @@ render vs an audio-only remix without guessing from the whole config mtime.
 
 | File | Written by | Purpose |
 |---|---|---|
-| `storyboard.json` | storyboard | timed scenes, framework, format and missing facts |
+| `storyboard.json` | storyboard | timed scenes, framework, format and missing facts; `order` carries the locked shot table |
 | `storyboard.md` | storyboard | human-readable version of the same plan |
+| `shot_order.json` | storyboard | validated `brief.story.shots`: `locked`, `order_source`, per-shot rows, `pass` (only when the brief has a shot table) |
+| `text_cards.json` | storyboard | one native title/spec card per locked shot, derived from `label`/`spec`; render loads it only when `sku.text_cards` is absent |
+| `preview/<stamp>/` | render/comp `--preview` | stills + `contact_sheet.png` + `preview.json`; review artifacts, never runs |
 | `script_lint.json` | lint | word budget, tempo, phonetics, display coverage |
 | `beat_grid.json` | beats | measured BPM, beat times, phase, drift |
 | `narration_lines.json` | align | timed sentences/clauses the planner consumes |
@@ -100,12 +110,18 @@ from before the run directory. They are readable but are **not** runs and QA's
 | `sfx_report.json` | sfx → render | sound-design gate evidence kept with the master |
 | `contact_sheet.png` | render | one frame per cut |
 | `qa_frames/*.png` | render | full-resolution review frames |
-| `qa_report.json` | qa | 30 rows (32 with `--hf-overlay`) with measured/threshold/fix |
-| `delivery.json` | deliver | where and when this run was copied |
+| `qa_report.json` | qa | 30 rows (32 with `--hf-overlay`) with measured/threshold/fix; local evidence, never written to the delivery shelf |
+| `delivery.json` | deliver | where and when this run was copied, plus `copied`/`skipped` |
+| `delivery_readme.md` | deliver | generated hand-off note: duration, shot table, audio mode, file list |
 | `*.md` | human/agent | hand-off notes; copied by deliver |
 
 A run is named by its SKU and creation time. Same-second renders get `-2`,
 `-3`. Nothing ever overwrites an existing run directory.
+
+**Only delivery commands write the delivery shelf.** `qa --latest` and
+`qa --post` read a delivered master but write their report to the local run
+(`output/<sku>/<run>/qa_report.json`) or, when the run directory is gone, to
+`output/<sku>/qa/<run>/qa_report.json`. `finish` reads the same path.
 
 ## Post-production outputs
 
@@ -123,8 +139,11 @@ the manifest/ffprobe, then watch the result.
 | `output/<p>/motion/<run>/motion.json`, `manifest.json` | motion | executed spec + duration/frames/alpha |
 | `output/<p>/motion/still.png` | motion `--still` | review frame (or `--out`) |
 | `output/<p>/track/track_<stamp>.json` | track | fps/size/start/template + `points[]` (`t,x,y,nx,ny,score`) |
-| `output/<p>/comp/<run>/comp.mp4` | comp | composited base + layers |
-| `output/<p>/comp/<run>/comp.json`, `manifest.json` | comp | executed spec + layer count/elapsed |
+| `output/<p>/comp/<run>/comp.mp4` | comp | composited base + layers (shared encoding + budget fallback) |
+| `output/<p>/comp/<run>/comp.json`, `manifest.json` | comp | executed spec, layer count/elapsed, `fingerprint` + resolved `inputs` for `--reuse` |
+| `output/<p>/comp/<run>/delivery.json` | comp `--deliver` | shelf/Downloads paths and the delivered file list |
+| `output/<p>/preview/<stamp>/frame_*.png`, `contact_sheet.png`, `preview.json` | render `--preview` | stills at cut midpoints + card first frames |
+| `output/<p>/preview/comp_<stamp>/frame_*.png`, `contact_sheet.png`, `preview.json` | comp `--preview` | layer placement at the base cut midpoints |
 | `output/<p>/fx/<run>/fx.mp4` | fx | effected clip |
 | `output/<p>/fx/<run>/fx.json`, `manifest.json` | fx | executed spec + effects/frames/elapsed |
 | `output/<p>/grade/<run>/graded.mp4` | grade | graded video |
