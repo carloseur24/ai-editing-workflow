@@ -1,0 +1,119 @@
+{
+  "title": "Galaxy S25 Ultra · Unboxing cinematográfico",
+  "project_type": "edit",
+  "goal": "Presentar el Galaxy S25 Ultra 512GB con un unboxing inmersivo y cinematográfico, cerrando con la cámara fotografiando la caja.",
+  "audience": "Compradores de gama alta en Venezuela que siguen a Fenixsoft",
+  "platforms": [
+    "reels",
+    "tiktok",
+    "whatsapp_status"
+  ],
+  "format": {
+    "aspect": "9:16",
+    "width": 1080,
+    "height": 1920,
+    "fps": 60
+  },
+  "duration_sec": 33,
+  "tone": "cinematográfico, inmersivo, premium, sin ruido",
+  "references": [
+    "s25_ultra_fenixsoft_validated.mp4 (tono, overlays y voiceover de referencia)",
+    "Grabación 2026-11-17 220008.mp4 (estilo de captions kinéticos)"
+  ],
+  "story": {
+    "framework": "hook_retain_reward",
+    "hook": "La cámara enfoca la caja y hace zoom hasta perderse en el detalle.",
+    "beats": [
+      {
+        "purpose": "hook",
+        "weight": 5.5,
+        "text": "GALAXY S25 ULTRA",
+        "visual": "cámara enfoca la caja y hace zoom",
+        "audio": "música entra suave",
+        "motion": "zoom lento al detalle"
+      },
+      {
+        "purpose": "interfaz",
+        "weight": 6.0,
+        "text": "512GB • Snapdragon 8 Elite",
+        "visual": "interfaz y ajustes del teléfono",
+        "audio": "voiceover",
+        "motion": "título/spec entra y sale"
+      },
+      {
+        "purpose": "unboxing",
+        "weight": 6.0,
+        "text": "TITANIO • S PEN",
+        "visual": "unboxing trasera, aparece el S25 Ultra",
+        "audio": "voiceover",
+        "motion": "reveal limpio"
+      },
+      {
+        "purpose": "detalle",
+        "weight": 5.5,
+        "text": "DYNAMIC AMOLED 2X",
+        "visual": "detalle de la caja en manos",
+        "audio": "voiceover",
+        "motion": "movimiento continuo"
+      },
+      {
+        "purpose": "cierre",
+        "weight": 10.0,
+        "text": "CÁMARA 200MP",
+        "visual": "cámara fotografiando la caja, cierre",
+        "audio": "música + SFX suave",
+        "motion": "fade a negro al segundo 33"
+      }
+    ],
+    "cta": "Escríbenos a @fenixsoft y llévate el Galaxy S25 Ultra.",
+    "decisions": [
+      "Formato vertical 9:16 60 fps para reels/estados",
+      "Se reutiliza el voiceover validado y se elimina el audio crudo de los clips",
+      "SFX al 60% del nivel actual para un mix suave",
+      "Títulos/specs entran y salen sin TapTheImage; captions kinéticos limpios"
+    ]
+  },
+  "assets": {
+    "footage_dir": "input/s25_ultra_fenixsoft/clips",
+    "clips": [
+      "galaxy-s25-ultra-camara-fotografiando-caja.mp4",
+      "galaxy-s25-ultra-interfaz-y-ajustes.mp4",
+      "galaxy-s25-ultra-unboxing-trasera.mp4",
+      "galaxy-s25-ultra-caja-detalle.mp4"
+    ],
+    "images": [],
+    "voiceover": "input/s25_ultra_fenixsoft/voice.mp3",
+    "music": "assets/music/groove_118bpm.wav",
+    "sfx": []
+  },
+  "motion": {
+    "style": "cinematic clean premium",
+    "elements": [
+      "zoom lento",
+      "transiciones suaves",
+      "captions kinéticos palabra a palabra"
+    ],
+    "transitions": [
+      "dissolve suave",
+      "whip pan sutil",
+      "fade to black final"
+    ]
+  },
+  "typography": {
+    "family": "Inter",
+    "treatments": [
+      "título blanco con sombra suave",
+      "specs en pills",
+      "captions con palabra activa resaltada"
+    ]
+  },
+  "deliverables": [
+    "mp4"
+  ],
+  "constraints": [
+    "Sin audio de los clips crudos",
+    "SFX suaves (60% del nivel actual)",
+    "Sin tapar la imagen con bloques de texto: solo título, specs y captions",
+    "Termina en el segundo 33 con fade a negro"
+  ]
+}
