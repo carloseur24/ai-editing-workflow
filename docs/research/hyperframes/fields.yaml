@@ -1,0 +1,138 @@
+topic: HyperFrames integration research
+version: 1
+
+# Nesting: write the JSON with one top-level object per category key
+# (basic, capabilities, api, integration, constraints, evidence) and the
+# fields below inside it. Flat JSON is also accepted by the validator.
+
+categories:
+  - name: Basic Info
+    key: basic
+    fields:
+      - name: title
+        type: string
+        required: true
+        description: Research item name (matches the outline item).
+      - name: domain
+        type: string
+        required: true
+        description: Short domain label, e.g. "Rendering engine", "Kinetic typography".
+      - name: one_liner
+        type: string
+        required: true
+        description: One sentence stating what this item is/does, max 30 words.
+      - name: official_sources
+        type: list
+        required: true
+        description: Canonical doc/repo URLs used as primary evidence.
+      - name: maturity
+        type: enum
+        values: [experimental, beta, stable, production]
+        description: Maturity of the feature/area as evidenced by docs, version and issues.
+      - name: last_verified
+        type: string
+        description: Date the facts were checked, YYYY-MM-DD.
+
+  - name: Capabilities
+    key: capabilities
+    fields:
+      - name: what_it_enables
+        type: string
+        required: true
+        description: Concrete capabilities this area unlocks for HTML-to-video work.
+      - name: key_features
+        type: list
+        required: true
+        description: Atomic feature bullets with enough detail to be actionable.
+      - name: technical_mechanism
+        type: string
+        description: How it works under the hood (parser, runtime, Chrome, FFmpeg, adapters).
+      - name: text_and_motion_capabilities
+        type: string
+        required: true
+        description: >-
+          Specifically what this area offers for typography and motion-graphics detail,
+          including precision limits, easing/animation primitives and per-word/per-glyph control.
+      - name: output_formats
+        type: list
+        description: Concrete outputs (MP4 H.264, WebM alpha, PNG sequence, stills, ...) with limits.
+
+  - name: Usage & API
+    key: api
+    fields:
+      - name: setup_and_install
+        type: string
+        description: Exact install/setup commands and prerequisites.
+      - name: minimal_code_example
+        type: string
+        description: Smallest complete working example (HTML, JS, CLI or Python), fenced.
+      - name: cli_or_api_surface
+        type: list
+        description: Commands, flags, exported functions or types relevant to this item.
+      - name: key_config_options
+        type: list
+        description: Config keys/flags that control behaviour, with defaults and effect.
+
+  - name: Integration
+    key: integration
+    fields:
+      - name: pipeline_fit
+        type: string
+        required: true
+        description: >-
+          How this fits a Python + FFmpeg pipeline producing 28 s 1080x1920@60 product reels;
+          say explicitly whether it replaces, augments or is irrelevant to the current stack.
+      - name: python_integration
+        type: string
+        required: true
+        description: >-
+          Concrete way to drive/inspect it from Python (subprocess, HTTP, Node bridge, file
+          contract), including caveats.
+      - name: data_injection
+        type: string
+        description: How per-video data (script lines, prices, word timings) gets into the render.
+      - name: footage_and_asset_handling
+        type: string
+        description: How existing MP4 footage, audio beds and fonts are consumed or combined.
+      - name: migration_effort
+        type: enum
+        values: [low, medium, high, unknown]
+        description: Effort to adopt for the described use case.
+      - name: integration_steps
+        type: list
+        description: Ordered, concrete steps to wire this into the pipeline.
+
+  - name: Constraints
+    key: constraints
+    fields:
+      - name: requirements
+        type: list
+        description: Runtime, OS, browser, FFmpeg, Node and hardware requirements.
+      - name: limitations
+        type: list
+        required: true
+        description: Real limitations, each phrased as a constraint the pipeline must respect.
+      - name: known_issues
+        type: list
+        description: Specific bugs/gaps with issue links when available.
+      - name: performance_and_cost
+        type: string
+        description: Render times, throughput, memory and money, with units and conditions.
+      - name: licensing
+        type: string
+        description: License terms for this area, including any Pro/paid boundary.
+
+  - name: Evidence
+    key: evidence
+    fields:
+      - name: confidence
+        type: number
+        required: true
+        description: 0..1 confidence in this item's facts given available evidence.
+      - name: sources
+        type: list
+        required: true
+        description: URLs actually used, each with a one-line note on what it proved.
+      - name: open_questions
+        type: list
+        description: What could not be verified and would need a hands-on spike.
