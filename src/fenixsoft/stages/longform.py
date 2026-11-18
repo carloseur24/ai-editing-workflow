@@ -37,8 +37,9 @@ import sys
 import time
 from pathlib import Path
 
-from ..context import (DEFAULT_CONFIG, OUTPUT_DIR, load_config, repo_path,
-                       resolve_sku_dir)
+from ..context import (DEFAULT_CONFIG, load_config, repo_path, resolve_sku_dir,
+                       stage_dir)
+from ..domain import encode
 
 DEFAULTS = {"width": 1920, "height": 1080, "fps": 30, "chapters": [],
             "audio": None, "audio_offset": 0.0, "fade_in": 0.0,
@@ -137,10 +138,11 @@ def chapters_markdown(spec: dict) -> str:
     return "\n".join(["| # | Title | In | Out |", "|---|---|---|---|"] + lines[2:]) + "\n"
 
 
-def render(spec: dict, out: Path) -> dict:
+def render(spec: dict, out: Path, cfg: dict | None = None) -> dict:
     errors = validate(spec)
     if errors:
         sys.exit("[longform] invalid spec: " + "; ".join(errors))
+    cfg = cfg or load_config(DEFAULT_CONFIG)
     out.parent.mkdir(parents=True, exist_ok=True)
     W, H = int(spec["width"]), int(spec["height"])
     fps = int(spec["fps"])
@@ -201,11 +203,11 @@ def render(spec: dict, out: Path) -> dict:
         else:
             af = "apad"
         cmd += ["-map", f"{audio_idx}:a", "-af", af,
-                "-c:a", "aac", "-b:a", "192k", "-t", f"{total:.3f}"]
+                *encode.audio_args(cfg, copy_audio=False),
+                "-t", f"{total:.3f}"]
     else:
         cmd += ["-an"]
-    cmd += ["-c:v", "libx264", "-preset", "medium", "-crf", "19",
-            "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(out)]
+    cmd += [*encode.video_args(cfg), str(out)]
 
     started = time.time()
     proc = subprocess.run(cmd, capture_output=True, text=True)
@@ -244,12 +246,13 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     project_dir = resolve_sku_dir(args.project)
+    cfg = load_config(DEFAULT_CONFIG, project=project_dir)
     spec_path = args.spec or (project_dir / "longform.json")
     spec = _load(spec_path)
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    run = OUTPUT_DIR / project_dir.name / "longform" / f"{project_dir.name}_{stamp}"
+    run = stage_dir(project_dir, "longform") / f"{project_dir.name}_{stamp}"
     out = args.out or (run / "master.mp4")
-    data = render(spec, out)
+    data = render(spec, out, cfg)
     run.mkdir(parents=True, exist_ok=True)
     (run / "longform.json").write_text(json.dumps(spec, indent=2), encoding="utf-8")
     (run / "manifest.json").write_text(json.dumps(data, indent=2), encoding="utf-8")
