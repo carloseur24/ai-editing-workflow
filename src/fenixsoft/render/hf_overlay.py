@@ -159,11 +159,21 @@ def _esc(text: str) -> str:
             .replace(">", "&gt;").replace('"', "&quot;").replace("'", "&#39;"))
 
 
+def _has_header(layout: dict) -> bool:
+    """True when the static header has anything to draw (title/badges/price/footer)."""
+    for key in ("title", "subtitle", "footer"):
+        if str((layout.get(key) or {}).get("text") or "").strip():
+            return True
+    if layout.get("badges"):
+        return True
+    return bool(int((layout.get("price") or {}).get("size") or 0))
+
+
 def _html(layout: dict, cards: list[dict], states: list[dict]) -> str:
     W = layout["canvas"]["width"]
     H = layout["canvas"]["height"]
-    title, subtitle = layout["title"], layout["subtitle"]
-    price, footer = layout["price"], layout["footer"]
+    title, subtitle = layout.get("title") or {}, layout.get("subtitle") or {}
+    price, footer = layout.get("price") or {}, layout.get("footer") or {}
     typo = layout["typography"]
     cx = layout["cx"]
     rule_y = int(layout["zone"]["badge_y"] + 62)
@@ -174,7 +184,33 @@ def _html(layout: dict, cards: list[dict], states: list[dict]) -> str:
           <path d="M20 6L9 17l-5-5" fill="none" stroke="#fff" stroke-width="3.6"
                 stroke-linecap="round" stroke-linejoin="round"/></svg></span>
         <span class="badge-t">{_esc(b['text'])}</span>
-      </div>''' for b in layout["badges"])
+      </div>''' for b in layout.get("badges") or [])
+
+    # A captions-only overlay has no header: emitting empty text/price nodes
+    # used to draw a stray rule and made the alpha check fail on header pixels.
+    has_header = _has_header(layout)
+    title_el = (f'''
+  <div class="txt" id="title" style="left:{title['x']}px;top:{title['y']}px;
+       font-size:{title['size']}px;color:#fff;
+       text-shadow:2px 2px 0 rgba(0,0,0,.78)">{_esc(title['text'])}</div>'''
+                if str(title.get("text") or "").strip() else "")
+    subtitle_el = (f'''
+  <div class="txt" id="subtitle" style="left:{subtitle['x']}px;top:{subtitle['y']}px;
+       font-family:'HFInterBold';font-size:{subtitle['size']}px;color:#6EE7B7;
+       text-shadow:2px 2px 0 rgba(0,0,0,.75)">{_esc(subtitle['text'])}</div>'''
+                   if str(subtitle.get("text") or "").strip() else "")
+    rule_el = '<div id="rule"></div>' if has_header else ""
+    price_el = (f'''
+  <div id="price" style="left:{price['x0']}px;top:{price['y0']}px;
+       width:{price['x1'] - price['x0']}px;height:{price['y1'] - price['y0']}px;
+       font-size:{price['size']}px">{_esc(price['text'])}
+    <div id="shine"></div>
+  </div>''' if int(price.get("size") or 0) else "")
+    footer_el = (f'''
+  <div class="txt" id="footer" style="left:{footer['x']}px;top:{footer['y']}px;
+       font-family:'HFInterBold';font-size:{footer['size']}px;color:#fff;
+       text-shadow:2px 2px 0 rgba(0,0,0,.82)">{_esc(footer['text'])}</div>'''
+                 if str(footer.get("text") or "").strip() else "")
 
     # one rendered frame per state, not one frame per output second
     duration = len(states) / STATE_FPS if states else 1.0
@@ -221,22 +257,12 @@ def _html(layout: dict, cards: list[dict], states: list[dict]) -> str:
 <body>
 <div id="root" data-composition-id="hf_overlay" data-start="0"
      data-duration="{duration:.3f}" data-width="{W}" data-height="{H}" data-fps="{STATE_FPS}">
-  <div class="txt" id="title" style="left:{title['x']}px;top:{title['y']}px;
-       font-size:{title['size']}px;color:#fff;
-       text-shadow:2px 2px 0 rgba(0,0,0,.78)">{_esc(title['text'])}</div>
-  <div class="txt" id="subtitle" style="left:{subtitle['x']}px;top:{subtitle['y']}px;
-       font-family:'HFInterBold';font-size:{subtitle['size']}px;color:#6EE7B7;
-       text-shadow:2px 2px 0 rgba(0,0,0,.75)">{_esc(subtitle['text'])}</div>
+  {title_el}
+  {subtitle_el}
   {badges}
-  <div id="rule"></div>
-  <div id="price" style="left:{price['x0']}px;top:{price['y0']}px;
-       width:{price['x1'] - price['x0']}px;height:{price['y1'] - price['y0']}px;
-       font-size:{price['size']}px">{_esc(price['text'])}
-    <div id="shine"></div>
-  </div>
-  <div class="txt" id="footer" style="left:{footer['x']}px;top:{footer['y']}px;
-       font-family:'HFInterBold';font-size:{footer['size']}px;color:#fff;
-       text-shadow:2px 2px 0 rgba(0,0,0,.82)">{_esc(footer['text'])}</div>
+  {rule_el}
+  {price_el}
+  {footer_el}
   <div id="captions"></div>
 </div>
 <script src="./assets/gsap.min.js"></script>
@@ -285,19 +311,19 @@ def _html(layout: dict, cards: list[dict], states: list[dict]) -> str:
     const [tp, sp, bp, pp, fp, rp, sh] = st.intro;
 
     if (t <= INTRO + 1 / FPS) {{
-      tl.set(title, {{ opacity: clamp01(tp), y: (1 - tp) * 22,
+      if (title) tl.set(title, {{ opacity: clamp01(tp), y: (1 - tp) * 22,
                        clipPath: `inset(0 ${{(1 - tp) * 100}}% 0 0)` }}, t);
-      tl.set(subtitle, {{ opacity: clamp01(sp), y: (1 - sp) * 16 }}, t);
+      if (subtitle) tl.set(subtitle, {{ opacity: clamp01(sp), y: (1 - sp) * 16 }}, t);
       badgeEls.forEach((el, j) => {{
         const p = clamp01(bp * 1.45 - j * 0.22);
         tl.set(el, {{ opacity: p, x: (1 - p) * 26,
                      scale: 0.96 + 0.04 * p }}, t);
       }});
-      tl.set(price, {{ opacity: clamp01(pp), scale: 0.90 + 0.10 * pp }}, t);
-      tl.set(shine, {{ xPercent: -140 + 280 * sh,
+      if (price) tl.set(price, {{ opacity: clamp01(pp), scale: 0.90 + 0.10 * pp }}, t);
+      if (shine) tl.set(shine, {{ xPercent: -140 + 280 * sh,
                       opacity: (sh > 0.02 && sh < 0.98) ? 0.55 : 0 }}, t);
-      tl.set(footer, {{ opacity: clamp01(fp), y: (1 - fp) * 14 }}, t);
-      tl.set(rule, {{ scaleX: rp }}, t);
+      if (footer) tl.set(footer, {{ opacity: clamp01(fp), y: (1 - fp) * 14 }}, t);
+      if (rule) tl.set(rule, {{ scaleX: rp }}, t);
     }}
 
     if (st.card !== prevCard) {{
@@ -345,7 +371,7 @@ def _cache_key(layout: dict, cards: list[dict], states: list[dict]) -> str:
     return hashlib.sha1(payload.encode()).hexdigest()[:16]
 
 
-def verify_png_alpha(png: Path) -> dict:
+def verify_png_alpha(png: Path, header_expected: bool = True) -> dict:
     raw = subprocess.run(["ffmpeg", "-v", "quiet", "-i", str(png),
                           "-f", "rawvideo", "-pix_fmt", "rgba", "-"],
                          capture_output=True, check=True).stdout
@@ -355,7 +381,12 @@ def verify_png_alpha(png: Path) -> dict:
     mid = float((alpha[700:1200, :] == 0).mean())
     header_px = int((alpha[90:340, :] > 0).sum())
     caption_px = int((alpha[1300:1700, :] > 0).sum())
-    return {"ok": mid > 0.80 and header_px > 500 and caption_px > 500,
+    # A captions-only overlay has no title/badges/price by design: requiring
+    # header ink there rejected a valid layer. When a header *is* declared,
+    # the pixels must still prove it rendered.
+    return {"ok": mid > 0.80 and caption_px > 500
+            and (header_px > 500 or not header_expected),
+            "header_expected": header_expected,
             "mid_transparent_ratio": round(mid, 3),
             "header_px": header_px, "caption_px": caption_px}
 
@@ -427,7 +458,7 @@ def ensure_overlay(cfg: dict, layout: dict, cards: list[dict], duration: float,
         raise RuntimeError(f"[hf] expected {len(states)} state frames, "
                            f"got {len(pngs)}")
     pngs = pngs[:len(states)]
-    alpha = verify_png_alpha(pngs[len(pngs) // 2])
+    alpha = verify_png_alpha(pngs[len(pngs) // 2], _has_header(layout))
     if not alpha["ok"]:
         raise RuntimeError(f"[hf] overlay lost alpha: {alpha}")
 
