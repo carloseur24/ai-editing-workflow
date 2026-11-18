@@ -1,0 +1,149 @@
+topic: HyperFrames integration research
+description: >-
+  Exhaustive research of heygen-com/hyperframes (HTML -> deterministic MP4) and how to
+  integrate it into the Fenixsoft 1080x1920 vertical product-reel pipeline, focused on
+  typography/kinetic captions and maximum motion-graphics detail.
+created: 2026-11-15
+
+execution:
+  output_dir: ./results
+  items_per_agent: 2
+  batch_size: 4
+
+items:
+  - name: Overview_and_Architecture
+    category: Platform
+    description: >-
+      HyperFrames open-source project by HeyGen. What it is, why it exists, the package split
+      (hyperframes CLI, @hyperframes/core, engine, producer, studio, player, shader-transitions,
+      aws-lambda), the end-to-end render pipeline (HTML composition -> headless Chrome seek ->
+      frame capture -> FFmpeg encode -> audio mux), determinism guarantees, Node.js 22+ / FFmpeg
+      requirements, Apache-2.0 license, maturity, release cadence and community size. Define
+      precisely what a "composition", a "clip" and a "frame" mean here, and how HyperFrames
+      differs from a normal web page screenshot tool.
+
+  - name: Composition_Authoring_Model
+    category: Authoring
+    description: >-
+      The HTML authoring contract: data-composition-id, data-start, data-duration,
+      data-track-index, data-width/data-height, which elements count as clips, tracks and z-order,
+      nested/sub-compositions and their timing, composition variables and data injection,
+      the project layout produced by "npx hyperframes init", frame.md / DESIGN.md, and how to
+      structure a reusable template. Provide a complete minimal working index.html and describe
+      every attribute with its semantics and defaults.
+
+  - name: Animation_Adapters_and_Determinism
+    category: Authoring
+    description: >-
+      The seekable-animation model: window.__timelines, paused GSAP timelines that are seeked,
+      CSS animations, WAAPI, Lottie, Three.js, Anime.js and custom frame adapters (exact adapter
+      API/signature), how the renderer seeks time t and captures deterministically, frame-accurate
+      sync with audio and hard cuts, spring/easing libraries, and the non-determinism pitfalls
+      (Math.random, Date.now, requestAnimationFrame, autoplaying video, network latency) plus how
+      to make animations idempotent under random access. Include runnable snippets.
+
+  - name: Text_Typography_and_Kinetic_Captions
+    category: Motion Graphics
+    description: >-
+      Everything text-related: web-font loading (local files vs Google Fonts) and FOIT/flash
+      risk during capture, text rendering quality, per-word and per-character kinetic typography,
+      text splitting, subtitles/captions (SRT/VTT import, word-level timings, highlighted-word
+      styles), caption blocks in the catalog, auto-fit and wrapping, safe zones for 9:16,
+      emoji, RTL, variable fonts, stroke/gradient/skew/outline effects, and how these animations
+      are actually expressed (GSAP SplitText vs CSS vs custom). Include code examples and limits.
+
+  - name: Motion_Graphics_Catalog_and_Transitions
+    category: Motion Graphics
+    description: >-
+      The catalog of ~450 ready-made blocks: full category taxonomy (transitions, overlays,
+      titles, kinetic type, captions, charts, maps, 3D, camera moves), how "npx hyperframes add"
+      works, what gets installed (editable source vs package), dependencies (GSAP, Three.js,
+      shaders), the @hyperframes/shader-transitions package, the customization workflow,
+      licensing of blocks, how to combine blocks into one reel, and quality/limitations of the
+      prebuilt components.
+
+  - name: Rendering_Engine_Performance_and_Output
+    category: Rendering
+    description: >-
+      Rendering internals and measured performance: Puppeteer/headless Chrome capture, frame
+      concurrency, fps/resolution/scale options, codec/bitrate/CRF settings, alpha and transparent
+      output options, audio encoding, render-time benchmarks at 1080x1920@60fps, memory and disk
+      usage, Docker, GPU usage, byte-identical determinism, still-frame export and partial-range
+      renders. Report documented numbers rather than guesses, and say when a number is unmeasured.
+
+  - name: CLI_and_Programmatic_API
+    category: API
+    description: >-
+      Complete CLI surface and programmatic API: init, dev/preview, lint/check, inspect, timeline,
+      render, still, add, catalog, auth, share, skills and cloud/render commands with their flags
+      and JSON output; exit codes and error recovery; plus the Node.js API of @hyperframes/core,
+      @hyperframes/producer and @hyperframes/player (render functions, config objects, progress
+      events, TypeScript types). Include copy-pasteable examples.
+
+  - name: Audio_and_Media_Pipeline
+    category: Media
+    description: >-
+      Media handling inside compositions: audio and video elements, data-volume, multi-track
+      mixing, ducking/normalization, audio codecs, sync between animation and sound, looping and
+      trimming, images/fonts/SVG assets, supported codecs (H.264, HEVC, WebM/VP9, ProRes), alpha
+      video, the /media-use skill for assets/voiceover/music, local vs remote asset URLs, and
+      CORS / file:// pathologies.
+
+  - name: Local_Rendering_On_WSL2
+    category: Deployment
+    description: >-
+      Local-only rendering on this exact machine, which is the primary target: WSL2 Ubuntu 24.04,
+      kernel 6.18, AMD Ryzen 7 5825U (8C/16T), 7.8 GB RAM with ~2.6 GB actually available, 856 GB
+      free disk, no CUDA or discrete GPU, Node v24.22.1, FFmpeg 6.1.1, Google Chrome already
+      installed at /usr/bin/google-chrome. Determine whether headless Chrome capture works in this
+      WSL2 setup without extra flags (sandbox, /dev/shm, --no-sandbox, GPU fallback), how
+      HyperFrames' worker formula (auto = max(6, min(16, cores/8)) = 6 here, ~256 MB per Chrome)
+      behaves against an 8 GB RAM ceiling, what a 28-second 1080x1920@60 render (1680 frames) is
+      likely to cost in wall time and disk, and where it will thrash. Treat Docker as NOT
+      available and cloud rendering as an optional free-tier fallback only: explain concretely
+      what the free options are (GitHub Actions minutes, AWS Lambda free tier, any HF-hosted
+      free quota), their real limits and what they would cost past the free allowance, so the
+      user can decide without guessing. Do not assume paid infrastructure.
+
+  - name: Vertical_9x16_Reels_Workflow
+    category: Use Case
+    description: >-
+      Short-form vertical video with HyperFrames: 1080x1920@60 composition setup, platform safe
+      zones (Instagram Reels/Stories, WhatsApp Status), kinetic caption styling for mobile
+      legibility (size, contrast, line length), file-size limits (WhatsApp ~16 MB), export
+      settings, 60fps performance, social-video examples and templates from the showcase, and
+      known pitfalls specific to 9:16.
+
+  - name: Python_Pipeline_Integration
+    category: Integration
+    description: >-
+      How to integrate HyperFrames into this specific Python pipeline. Current stack: script_lint.py,
+      beat_grid.py (measured tempo/phase), extract_keyframes.py (candidates.json with scored windows),
+      align_words.py (word timings + narration_lines.json), plan_edit.py (lines x candidates ->
+      edit_plan.json snapped to beats by index), validate_edit_plan.py, render_video.py (FFmpeg,
+      1080x1920@60, per-run output dir <sku>_<stamp>/), qa_check.py (29 checks incl. c_clip_identity,
+      caption text/zone, window sharpness), eval_run.py (SSIM + regression vs eval/<sku>_baseline.json),
+      runs.json/latest.json. Work out how HyperFrames slots in: invoking the CLI via subprocess
+      (progress on stdout as @hf-progress, warnings on stderr, exit codes 0/1/2, timeouts, render
+      lock), bridging to the Node API, generating composition HTML from sku.json + narration_lines.json
+      + caption_audit with safe escaping, passing per-video variables, rendering transparent overlays
+      and compositing them over the beat-cut footage in FFmpeg, keeping qa_check/eval_run meaningful
+      when text moves out of FFmpeg, and a concrete step-by-step design with code, including a
+      minimal spike that proves the overlay path before committing.
+
+  - name: Migration_and_Ecosystem_Comparison
+    category: Ecosystem
+    description: >-
+      HyperFrames versus Remotion, Motion Canvas, After Effects/Lottie and plain FFmpeg drawtext:
+      authoring model, licensing, rendering performance, ecosystem maturity and hiring pool. What
+      the /remotion-to-hyperframes skill automates, how to import existing assets and animations,
+      realistic effort estimates, and a decision matrix for a small Python/FFmpeg shop producing
+      28-second vertical product reels.
+
+  - name: Limitations_Known_Issues_and_Roadmap
+    category: Risk
+    description: >-
+      Honest limits and risks: open GitHub issues and discussions, missing or half-finished
+      features, performance ceilings, browser/font/codec quirks, determinism caveats, Windows/WSL
+      support, documentation gaps, community size and maintainer responsiveness, release cadence,
+      roadmap signals, the OSS vs HyperFrames Pro boundary, and production-adoption risk.
