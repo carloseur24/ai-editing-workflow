@@ -1,0 +1,169 @@
+{
+  "basic": {
+    "title": "Overview and Architecture",
+    "domain": "Platform / HTML-to-video rendering engine",
+    "one_liner": "HeyGen's Apache-2.0 framework renders HTML compositions to deterministic MP4 by seeking paused timelines frame by frame in headless Chrome and encoding with FFmpeg.",
+    "official_sources": [
+      "https://github.com/heygen-com/hyperframes",
+      "https://hyperframes.heygen.com/introduction",
+      "https://hyperframes.heygen.com/concepts/determinism",
+      "https://hyperframes.heygen.com/concepts/compositions",
+      "https://hyperframes.heygen.com/packages/producer",
+      "https://hyperframes.heygen.com/packages/engine",
+      "https://hyperframes.heygen.com/packages/core",
+      "https://www.npmjs.com/package/hyperframes",
+      "https://hyperframes.heygen.com/quickstart"
+    ],
+    "maturity": "stable",
+    "last_verified": "2026-11-15"
+  },
+  "capabilities": {
+    "what_it_enables": "HyperFrames turns a folder of ordinary HTML, CSS, media and seekable JavaScript animation into a frame-exact video file, without a bundler, without a React-style component model and without a proprietary timeline format. For a product-reel pipeline the practical meaning is: any layout you can build in a browser (kinetic type, gradients, masks, WebGL, Three.js, shaders, Lottie) can be rendered as a deterministic 1080x1920 asset that is reproducible in CI, and the same project folder previews in a browser, renders locally, renders in Docker, or fans out to AWS Lambda / Cloud Run.",
+    "key_features": [
+      "Attribute-driven timeline: any element carrying data-start / data-duration / data-track-index becomes a clip, so timing lives in HTML rather than in JavaScript.",
+      "Paused, seekable animation: GSAP timelines are created with { paused: true }, registered on window.__timelines[compositionId], and only ever seeked - never played - by the renderer.",
+      "Adapter-based motion: CSS animations, WAAPI, Lottie, Three.js, Anime.js and custom frame adapters all plug into the same seek contract (init -> seekFrame(frame) repeated -> destroy).",
+      "Sub-compositions: a composition can mount another inline or from a <template> file via data-composition-src, with a host time window, its own local timeline and per-instance variables.",
+      "Frame-exact capture: Chrome's HeadlessExperimental.beginFrame grabs each frame atomically, with Page.captureScreenshot as a supported fallback mode.",
+      "Not a screenshot pipeline: every frame is produced by seeking to an exact t and capturing once, with video frames pre-extracted and audio mixed separately, so output never depends on page load time, playback speed or machine speed.",
+      "Video is taken off the browser clock: every <video> source is pre-extracted by FFmpeg into per-frame images that replace the element during capture, so decode latency cannot desync or drop a frame.",
+      "Audio is mixed rather than recorded: all <audio>/<video> clips are gain-, fade- and automation-mixed into one timeline WAV by FFmpeg, then encoded to AAC (MP4/MOV) or Opus (WebM) and muxed.",
+      "Parallel capture: the default worker count is 'auto' (CPU/memory/heap/frame-count heuristic); each worker is a separate Chrome process of roughly 256 MB and takes a contiguous frame range.",
+      "Determinism contract: t = floor(frame) / fps, no wall clock, no unseeded randomness, no mid-render network fetch, fps/width/height/variables locked before frame 0, and __playerReady/__renderReady gates holding capture until the project is loaded.",
+      "Docker render path (--docker) pins Chromium, the font set and the FFmpeg encoder so the host stops being an input; that is the documented route to cross-machine reproducibility.",
+      "Outputs: MP4 (H.264/AAC, optional HDR), WebM (VP9/Opus, alpha), MOV (ProRes 4444 alpha or 422 profiles), GIF, PNG sequence (RGBA, optional AAC sidecar) and HLS VOD.",
+      "Operational tooling: lint (static contract), check (browser runtime, layout, motion, contrast), snapshot, compare, keyframes, timeline, doctor and clean; every command is non-interactive and most accept --json.",
+      "Distributed rendering is first-class: the producer exposes plan / renderChunk / assemble activities, shipped as adapters for AWS Lambda + Step Functions + S3 and for Google Cloud Run + Workflows.",
+      "Agent-first packaging: init scaffolds AGENTS.md and CLAUDE.md, installs the core skill set, and the CLI defaults to non-interactive so agents and CI can drive it."
+    ],
+    "technical_mechanism": "Definitions used throughout this research.\nComposition: one HTML document that is a finite, seekable piece of video. Its root carries data-composition-id, data-width/data-height and usually data-duration; index.html is the top-level composition and any composition can be mounted inside any other. The length is fixed before frame 0, and everything visible inside it is either a clip or plain untimed decoration.\nClip: any element carrying timing attributes (data-start, data-duration, data-track-index) - a <video>, an <img>, an <audio>, a timed DOM element, or a host <div data-composition-id> that mounts a sub-composition. The runtime shows a clip only inside [start, start+duration) and the renderer composites whatever is visible at t.\nFrame: one still image at index i, captured at t = floor(i)/fps, for a composition whose fps, width and height were locked before frame 0. A render of D seconds at F fps is ceil(D x F) independently requested frames (0..N-1); nothing is ever played, so a slow machine cannot drop one. 28 s at 60 fps = 1,680 frames.\n\nPackage split (one monorepo, 15 published packages plus a private SDK playground, all published ones versioned together at 0.9.54). `hyperframes` (packages/cli) is the published CLI and bin: init, preview, lint, check, snapshot, timeline, keyframes, render, add/catalog, audio/transcribe/tts/capture, publish/share, cloud/lambda/cloudrun, skills, doctor, clean. @hyperframes/core is the shared model - types, parser re-exports, the compiler (compileHtml, bundleToSingleHtml), variables, generators and the browser runtime. @hyperframes/parsers is the standalone HTML + GSAP AST parser/writer with no @hyperframes dependencies, and @hyperframes/lint is the rule engine. @hyperframes/engine is the low-level seekable capture layer: browser manager and lease pool, frameCapture, parallelCoordinator, videoFrameExtractor/Injector, audioMixer, chunkEncoder/streamingEncoder, encoders, muxers, motion blur and HDR. @hyperframes/producer is the six-stage pipeline plus the render-job API, the Hono render server and the distributed plan/renderChunk/assemble entry. @hyperframes/studio and @hyperframes/studio-server are the browser editor UI and its server; @hyperframes/sdk is a headless, framework-neutral editing engine; @hyperframes/player is the <hyperframes-player> web component; @hyperframes/shader-transitions is the WebGL transition library; @hyperframes/aws-lambda is the Lambda handler + client SDK + CDK construct (Step Functions fan-out, S3 transport); @hyperframes/gcp-cloud-run is the Cloud Run/Workflows/Terraform equivalent; @hyperframes/inspector and @hyperframes/share cover inspection and review-link identity.\n\nWhy it is not a web-page screenshot tool: a screenshot tool answers \"what does this page look like now?\" - it depends on load timing, viewport, animations in progress and the wall clock, so two runs differ. HyperFrames answers \"what does this project look like at frame 903?\" Time is an input rather than an emergent property: fps, size and variables are locked before frame 0, every animation is a paused timeline that is seeked to t, native video is replaced by FFmpeg-extracted stills so decode timing cannot drift, audio is mixed from the timeline instead of being recorded, and capture is an atomic BeginFrame rather than a best-effort screen grab. The output is an encoded frame sequence at an exact fps with muxed audio, not a recording of a browser session.\n\nRender pipeline, six stages (packages/producer/src/services/renderOrchestrator.ts):\n1. compile - the HTML compiler parses the project, inlines data-composition-src templates, resolves relative start expressions and media durations, rewrites asset paths and bundles everything plus the hyperframe runtime into one servable document.\n1b. probe - a browser pass discovers the true duration (when the root has no data-duration) and reconciles media metadata against the authored clips.\n2. extract videos - FFmpeg pre-extracts each <video> source into per-frame stills (JPEG by default, PNG for alpha or colour-sensitive sources), honouring data-media-start and data-playback-rate; during capture those stills are injected as <img> elements in place of the native video.\n3. audio - every <audio>/<video> track is mixed into a single timeline WAV with gain, edge fades, volume/rate automation lanes and loops.\n4. capture - a local file server serves the bundle; Puppeteer (puppeteer-core) drives headless Chrome. For frame i the engine computes t = floor(i)/fps (quantised to the frame grid) and calls the page's seek protocol, which seeks every registered timeline and frame adapter, then captures via HeadlessExperimental.beginFrame or the screenshot fallback. Frame ranges are spread across worker processes.\n5. encode - FFmpeg encodes chunks with libx264 / libvpx-vp9 / ProRes (CRF or bitrate), concatenates them and writes faststart output; HDR uses a separate frame pipeline.\n6. assemble - the mixed audio is muxed, and output validation checks duration, dimensions and (when the container reports it) expected frame count.\nEverything below the producer is @hyperframes/engine: browser manager and lease pool, frameCapture, parallelCoordinator, videoFrameExtractor/Injector, audioMixer, chunkEncoder/streamingEncoder, encoders and muxers.",
+    "text_and_motion_capabilities": "Text is real DOM text in real fonts, laid out by Chrome at the authored pixel/container-query sizes, so every CSS typographic device is available: variable fonts, gradients and background-clip text, -webkit-text-stroke, text-shadow, masks, filters, 3D transforms, SVG text and per-glyph spans. Because the renderer seeks instead of playing, each frame is exact to t = frame/fps, so a 60 fps render gives 16.67 ms motion granularity - enough for per-word caption pops that land on measured audio timings, but you must not rely on wall-clock sequencing. Precision limits are the practical kind: fonts must be loaded before any measuring (render waits on __playerReady), split text is a DOM operation you (or GSAP SplitText, or the caption blocks/skills) perform, and the core renderer ships no caption engine of its own - captions arrive as compositions, catalog blocks or skills. Motion primitives come from the adapter you choose: GSAP eases, CustomEase, spring eases generated by @hyperframes/parsers/spring-ease, CSS keyframes, WAAPI, Lottie, Three.js/WebGL, Anime.js; shader transitions are provided by @hyperframes/shader-transitions. Motion blur is an opt-in extra with its own cost and limits.",
+    "output_formats": [
+      "MP4 - H.264 + AAC, the default delivery format; quality presets draft / looks (CRF 16, default) / delivery / high, optional HDR (hdrMode), optional 4:4:4 master (chromaSubsampling 444, software encoder only).",
+      "WebM - VP9 + Opus, supports alpha for web overlays; much slower than MP4 because VP9 is CPU-heavy.",
+      "MOV - ProRes 4444 with alpha by default, or 4:2:2 profiles hq/422/lt/proxy (no alpha); AAC audio.",
+      "GIF - silent, 30 fps ceiling, loop count 0-65535; intended for previews and PRs.",
+      "PNG sequence - RGBA frames written to a directory plus an optional AAC sidecar, for AE/Nuke/Fusion handoff.",
+      "HLS - H.264/AAC VOD packaged into master.m3u8 + segments; SDR only, GPU encoding refused, segments locked to keyframes.",
+      "Side products: still frames via `hyperframes snapshot`, contact sheets/compare reports, and a reference_background metadata field describing the composition's computed background."
+    ]
+  },
+  "api": {
+    "setup_and_install": "Prerequisites: Node.js 22 or newer (the npm package declares engines.node >= 22) and FFmpeg/ffprobe on PATH.\n\n  npm install -g hyperframes            # or use npx, no global install\n  npx hyperframes doctor                # verifies node, Chrome, FFmpeg, disk\n  npx hyperframes init my-video         # scaffold (use --resolution portrait for 1080x1920)\n  cd my-video\n  npx hyperframes preview               # browser preview with live reload\n  npx hyperframes render --output out.mp4\n\nChrome is not bundled: puppeteer-core plus @puppeteer/browsers downloads a pinned build on first use. Docker is optional and only needed for pinned, cross-machine reproducible renders (--docker).",
+    "minimal_code_example": "A complete 8-second 1080x1920 composition. Save as index.html, put product.mp4 and music.mp3 in assets/, then run `npx hyperframes render --output out.mp4`:\n\n```html\n<!doctype html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"UTF-8\" />\n    <meta name=\"viewport\" content=\"width=1080, height=1920\" />\n    <script src=\"https://cdn.jsdelivr.net/npm/gsap@3.15.0/dist/gsap.min.js\"></script>\n    <style>\n      html, body { margin: 0; width: 1080px; height: 1920px; overflow: hidden; background: #05070a; }\n      #root { position: relative; width: 1080px; height: 1920px; overflow: hidden; }\n      .clip { position: absolute; inset: 0; }\n    </style>\n  </head>\n  <body>\n    <div id=\"root\" data-composition-id=\"reel\" data-start=\"0\" data-duration=\"8\"\n         data-width=\"1080\" data-height=\"1920\" data-fps=\"60\">\n      <video id=\"bg\" class=\"clip\" src=\"assets/product.mp4\" data-start=\"0\" data-duration=\"8\"\n             data-track-index=\"0\" data-media-start=\"0\" muted playsinline></video>\n      <h1 id=\"headline\" class=\"clip\" data-start=\"1\" data-duration=\"5\" data-track-index=\"1\"\n          style=\"display:grid;place-items:center;color:#fff;font:800 92px/1.05 system-ui\">\n        Precio real\n      </h1>\n      <audio id=\"bed\" src=\"assets/music.mp3\" data-start=\"0\" data-duration=\"8\"\n             data-track-index=\"2\" data-volume=\"0.35\"></audio>\n      <script>\n        window.__timelines = window.__timelines || {};\n        const tl = gsap.timeline({ paused: true });\n        tl.fromTo(\"#headline\", { y: 60, opacity: 0 },\n                  { y: 0, opacity: 1, duration: 0.5, ease: \"power3.out\" }, 1);\n        window.__timelines.reel = tl;\n      </script>\n    </div>\n  </body>\n</html>\n```\n\nEquivalent programmatic render from Node:\n\n```ts\nimport { createRenderJob, executeRenderJob } from \"@hyperframes/producer\";\n\nconst job = createRenderJob({ fps: 60, quality: \"high\", format: \"mp4\" });\nawait executeRenderJob(job, \"./my-video\", \"./renders/reel.mp4\", (j, msg) =>\n  console.log(`${Math.round(j.progress)}% ${msg}`),\n);\n```",
+    "cli_or_api_surface": [
+      "hyperframes init <dir> - scaffold; flags --example/-e, --resolution (landscape|portrait|square + 4k/1440p presets), --video, --audio, --tailwind, --non-interactive, --skip-transcribe, --keep-original, --model, --language, --skip-skills.",
+      "hyperframes preview - local preview + browser editor with live reload.",
+      "hyperframes lint / check - static contract lint vs browser runtime, layout, motion and contrast checks.",
+      "hyperframes snapshot --at 0,2,5 - PNG stills for visual verification.",
+      "hyperframes render - the main command; see key_config_options for flags.",
+      "hyperframes timeline / compositions / keyframes - inspect tracks and clips (--json), list compositions, probe keyframe behaviour.",
+      "hyperframes add <block|component|tag> / catalog - install registry items into compositions/ and compositions/components/; --json, --dir, --no-clipboard.",
+      "hyperframes audio / transcribe / tts / capture - measure audio, Whisper transcription, narration generation, website capture.",
+      "hyperframes doctor / clean / compare / benchmark - machine diagnostics, disk cleanup, version comparison, render benchmarks.",
+      "hyperframes publish / share / auth / cloud / lambda / cloudrun / skills - delivery, review links, identity, distributed renders, skill installation.",
+      "@hyperframes/producer: createRenderJob(options), executeRenderJob(job, projectDir, outputPath, onProgress?, abortSignal?), createProducerApp(), startServer({ port }), and the @hyperframes/producer/distributed entry with plan / renderChunk / assemble.",
+      "@hyperframes/engine: createCaptureSession, initializeSession, getCompositionDuration, captureFrame, captureFrameToBuffer, closeCaptureSession, encodeFramesChunkedConcat, concatVideoFiles, muxVideoWithAudio, browser pool helpers.",
+      "@hyperframes/core: parseHtml, extractCompositionMetadata, generateHyperframesHtml, validateVariables, getVariables, and @hyperframes/core/compiler with compileHtml / bundleToSingleHtml; @hyperframes/core/runtime is the browser runtime."
+    ],
+    "key_config_options": [
+      "--fps / -f - integer (24/25/30/50/60/120/240) or ffmpeg rational (30000/1001). Range 1-240. Default: the root's data-fps, else 30.",
+      "--quality / -q - draft | looks | delivery | standard | high. Default: looks (CRF 16).",
+      "--format - mp4 | webm | mov | gif | png-sequence | hls. Default: mp4.",
+      "--output / -o - output path. Default: renders/<project>_<YYYY-MM-DD>_<HH-MM-SS>.<ext>.",
+      "--resolution - landscape|portrait|square plus -4k/-1440p variants. Does not change the composition: Chrome renders at a higher deviceScaleFactor; aspect ratio must match and upscaling must be an integer multiple. Not supported with --hdr.",
+      "--workers / -w - parallel render workers, a number or 'auto'. Default: auto (CPU/memory/heap/frame-count heuristic). Each worker is a separate Chrome process (~256 MB RAM).",
+      "--docker - render inside the pinned container for deterministic, cross-machine output. Default: false.",
+      "--crf / --video-bitrate - encoder quality overrides (mutually exclusive; rejected for MOV).",
+      "--start / --end - partial-range render (MP4, SDR, whole frame rates 24/25/30/60 only).",
+      "--variables '<json>' / --variables-file <path> / --strict-variables / --batch <rows.json> / --batch-concurrency N - per-render data injection and batch rendering; default batch concurrency is 1.",
+      "--gpu - GPU encoding (NVENC/VideoToolbox/VAAPI). Default: false.",
+      "--hdr / --sdr - force HDR or SDR output; HDR is MP4-only and SDR is forced for transparent formats.",
+      "--keyframe-interval / --max-bitrate / --buffer-size - delivery constraints for MP4 (buffer defaults to twice the cap).",
+      "--hls-segment-seconds - default 4; also locks the GOP so every segment starts on a keyframe.",
+      "--prores-profile - hq | 422 | lt | proxy for MOV (no alpha).",
+      "--json / --debug - machine-readable result (exactly one document with --batch) and retained render.log diagnostics.",
+      "--page-motion-blur off - disable authored page motion blur for a render; --video-frame-format auto|jpg|png controls source extraction."
+    ]
+  },
+  "integration": {
+    "pipeline_fit": "Augments, and for the overlay layer replaces, the current FFmpeg-only stack rather than the whole pipeline. The existing Python beat grid, keyframe QA, script lint and FFmpeg cut assembly stay the source of truth for footage and beat-synced cuts; HyperFrames takes over everything that is text, layout and motion-graphics: kinetic captions, price pills, badges, lower thirds, transitions and end cards, rendered as a transparent WebM/MOV overlay (or as a full-frame MP4) that FFmpeg composites over the product footage. A full replacement is possible but throws away the already-validated beat-locked cutting model; the hybrid keeps render determinism where it matters (text) and keeps the fast, cheap footage path where it already works.",
+    "python_integration": "Contract-first, three options in increasing coupling:\n1. Subprocess (recommended): generate the project folder from Jinja/JSON, then run `npx hyperframes render <dir> --output <path> --json` with subprocess.run(timeout=...), parse the JSON result or the stderr progress lines, and treat exit code 0 as success. Exit codes are documented: 0 success, 1 ran and failed, 2 bad command line. Note that without --batch, --json only silences progress and prints a JSON error envelope on failure, so parse the produced file (ffprobe) as the real success signal.\n2. HTTP: run `@hyperframes/producer`'s Hono server (startServer) once and POST render jobs; it binds 127.0.0.1 by default, requires a bearer token off-loopback, and confines projectDir/outputPath to configured roots.\n3. Node bridge: a ~30-line Node script importing @hyperframes/producer and emitting newline-delimited JSON progress, invoked from Python - useful when you need per-frame progress or cancellation (AbortSignal).\nCaveats: Node 22+ and FFmpeg must exist in the same environment (or use --docker), first run downloads Chrome, and long renders should stream stdout/stderr rather than buffer them.",
+    "data_injection": "Two layers. Composition variables: declare data-composition-variables on the root (string, number, color, boolean, enum, font, image), bind them with data-var-text / data-var-src / CSS var(--id), then override per render with --variables '{...}', --variables-file, or one row per video with --batch rows.json --output 'renders/{name}.mp4'. Nested hosts get per-instance values with data-variable-values. Structural data (how many scenes, which clips) is normally injected by generating the HTML itself, because variables explicitly cannot change viewport, root duration, fps, codec or layout structure. For this pipeline: word timings become GSAP tween positions inside the generated HTML, prices/titles/colours become variables, and the render stays a pure function of the generated folder.",
+    "footage_and_asset_handling": "Existing MP4s are consumed directly as <video class=\"clip\"> elements with data-start, data-duration, data-media-start (source in-point), data-playback-rate, data-volume and optional data-fade-in/out; the engine extracts their frames with FFmpeg and also takes their audio into the mix (declare data-has-audio=\"true\" and do not mute, or use muted for silent B-roll). Audio beds are <audio> elements with the same timing attributes and are mixed to -14 LUFS-style targets by your own post chain, not automatically. Fonts live in assets/fonts and are loaded before measuring; the runtime can be told to use deterministic font handling, and Docker pins the font set. Remote https assets are downloaded into the work directory before capture (8 GiB / 30 min / 32 KiB/s / 512 MiB free-space guards, each env-overridable), which is also the reason mid-render network access is a determinism risk.",
+    "migration_effort": "medium",
+    "integration_steps": [
+      "Pin a version (e.g. hyperframes@0.9.54) and add a bootstrap step that installs Node 22+, FFmpeg and the Chrome build in the render image; verify with `npx hyperframes doctor`.",
+      "Build one Jinja template pair: a root index.html at 1080x1920 with data-fps=\"60\" and data-duration set from the voiceover, plus one composition per overlay type (caption block, price pill, end card).",
+      "Express every per-video value as a declared composition variable; keep word timings out of variables and bake them into GSAP tween positions when generating the HTML.",
+      "Render a transparent overlay first (`--format webm` for the web, `--format mov --prores-profile 4444` for an editing master) and composite it in the existing FFmpeg graph with -c:v libx264 for the final MP4.",
+      "Add a pre-render gate in Python: run `npx hyperframes lint` and fail the job on non-zero exit before spending a render.",
+      "Add a post-render gate: ffprobe duration/size/pix_fmt plus a handful of extracted frames checked by the existing QA scripts, mirroring qa_check.py's role.",
+      "Render in --docker in CI to pin Chromium/fonts/FFmpeg, and cache the Chrome download, node_modules and the extraction cache between runs.",
+      "Measure one real 28 s 1080x1920@60 overlay render end-to-end and set per-job timeouts and worker counts from that number, not from the 1080p benchmark."
+    ]
+  },
+  "constraints": {
+    "requirements": [
+      "Node.js >= 22 (declared in package.json engines); the CLI is ESM and ships as the npm package `hyperframes`.",
+      "FFmpeg and ffprobe on PATH for every local render (encoding, frame extraction, audio mixing, probing).",
+      "A Chrome/Chromium build downloaded by @puppeteer/browsers via puppeteer-core; no system Chrome is required but a pinned one can be supplied.",
+      "Linux, macOS or Windows; WSL is handled explicitly (separate env/launch paths in the browser manager), and a Docker image is provided for pinned renders.",
+      "Disk for frame extraction plus per-render scratch: a 28 s 60 fps render is ~1,680 frames, and source video extraction can add several GB for long footage.",
+      "Optional GPU for WebGL/WebGPU compositions; without one, SwiftShader software rendering works but is documented as 5-50x slower.",
+      "For data-requires-webgpu compositions, a WebGPU device must be creatable within a 10 s probe or capture aborts with WebGpuUnavailableError."
+    ],
+    "limitations": [
+      "Pre-1.0 and fast-moving: 0.9.x shipping several npm versions a day (125 versions in the 30 days to 2026-11-15), so the CLI/API surface can change between minor versions - pin an exact version and re-run the visual gate on upgrade.",
+      "Determinism is per-environment, not universal: the same machine and settings reproduce frames, but Chrome version, installed fonts, GPU/driver and encoder build can shift pixels; only --docker makes the platform stop being an input.",
+      "Motion blur is the documented exception to seek-order independence, because it accumulates samples across a shutter window.",
+      "Real-time playback semantics are unavailable by design: requestAnimationFrame, Date.now, autoplaying media and mid-render fetches break determinism and are lint-flagged or silently wrong.",
+      "Render speed is not real-time: capture is one frame at a time, so a heavy 60 fps 1080x1920 composition costs seconds per second of output, and every extra worker costs ~256 MB RAM.",
+      "Transparent output is limited to WebM (VP9/Opus) and MOV (ProRes 4444); MP4 is opaque, and HDR plus alpha is not a supported combination.",
+      "The renderer assumes it owns media playback; author code that calls play(), pause() or sets currentTime fights the runtime.",
+      "Distributed rendering is infrastructure glue, not a managed service: you own the bucket, state machine, retries and cost, and Lambda output is SDR-only.",
+      "The free/open surface is the renderer and CLI; the Studio app's Pro plan, some skills (/reverse-any-video, /style-sampling) and cloud/share quotas are commercial."
+    ],
+    "known_issues": [
+      "Local renders can differ by a pixel or two from another machine's render of the same project (documented font/Chrome variance), so golden-image tests must run in the pinned container.",
+      "The tree carries ~109 open issues and ~185 open pull requests at 0.9.54, i.e. a very active but not fully triaged backlog.",
+      "Two attribute readers disagree on data-media-start vs data-playback-start; a <video> authored with only data-playback-start renders a trimmed picture over untrimmed audio (documented trap in the HTML schema).",
+      "A composition root with data-composition-id but no registered timeline and no data-no-timeline makes the producer poll for up to 45 s on every render (lint rule missing_data_no_timeline).",
+      "Inspection commands (check, validate, snapshot, compare) clamp to a 4096 px viewport, so a larger authored canvas is only fully verified by an actual render.",
+      "GIF has no audio and is capped at 30 fps; WebM VP9 is CPU-heavy and much slower than MP4.",
+      "The Docker CLI wrapper does not currently return the child process's result metadata (documented limitation for reference_background)."
+    ],
+    "performance_and_cost": "Documented benchmark: 300 frames at 1920x1080 rendered in 9.8 s (median of three runs, ~30.6 output fps) and 25.0 s with one expensive CSS declaration added, with pixel comparison proving the picture was unchanged. That is a 1080p landscape number, not 1080x1920@60, so treat 9:16 60 fps throughput as unmeasured until benchmarked on the render host. Cost drivers: capture (per-frame Chrome work, heavy filters/blur/masks), source-video extraction (FFmpeg, cached), VP9 encoding (CPU-heavy), worker count (auto; each worker ~256 MB), and software WebGL (5-50x slower than hardware). AWS Lambda renders bill by compute time and are SDR-only; Cloud Run and local Docker are the other paths. Disk: frames plus extraction cache dominate, and `hyperframes clean` exists to reclaim it.",
+    "licensing": "Apache License 2.0 for the repository and all published packages, with no per-render fee, seat count or commercial-use threshold. The commercial boundary is around the hosted product, not the renderer: the HyperFrames Studio desktop app is free, its Pro plan sells HeyGen's video/image/voice/music models, two skills (/reverse-any-video, /style-sampling) are marked Pro, and share/review links have plan limits (five free shared projects per workspace). Catalog blocks installed with `hyperframes add` are editable source shipped under the same repo license."
+  },
+  "evidence": {
+    "confidence": 0.9,
+    "sources": [
+      "https://github.com/heygen-com/hyperframes - README: positioning ('Write HTML. Render video. Built for agents.'), Apache-2.0, Node 22+/FFmpeg requirements, the eight documented packages, the inline data-attribute example, the HyperFrames-vs-Remotion table, the stack table and community section.",
+      "https://hyperframes.heygen.com/concepts/determinism - the frame model (t = floor(frame)/fps), the five determinism rules, BeginFrame capture, Docker for reproducibility, and the motion-blur exception.",
+      "https://hyperframes.heygen.com/packages/producer - output formats, HDR/4:4:4/HLS constraints, executeRenderJob API, the Hono render server and the distributed plan/renderChunk/assemble entry.",
+      "https://hyperframes.heygen.com/packages/engine - the seek protocol (window.__hf with duration and seek(time)), capture/encode primitives, WebGPU probe, remote-download limits.",
+      "https://hyperframes.heygen.com/packages/core - core surfaces (compiler, variables, runtime), compileHtml / bundleToSingleHtml, parse/generate helpers.",
+      "https://registry.npmjs.org/hyperframes and https://registry.npmjs.org/hyperframes/latest - version 0.9.54 published 2026-11-15, first publish 2026-03-23, 641 versions, engines node>=22, Apache-2.0, puppeteer-core dependency, bin entries.",
+      "https://api.github.com/repos/heygen-com/hyperframes - 84,726 stars, 7,844 forks, 203 watchers, 294 open issues+PRs, created 2026-03-10, license Apache-2.0.",
+      "https://api.github.com/repos/heygen-com/hyperframes/contributors - Link header reports 144 contributor pages at per_page=1, i.e. 144 contributors.",
+      "https://api.npmjs.org/downloads/point/last-month/hyperframes - 5,223,278 downloads for 2026-10-16..2026-11-14.",
+      "https://hyperframes.heygen.com/guides/performance - the 25.0 s vs 9.8 s, 300-frame 1920x1080 benchmark and the VP9/WebGL cost notes.",
+      "Source: packages/producer/src/services/renderOrchestrator.ts - the six named stages (compile, probe, extract videos, audio, capture, encode, assemble).",
+      "Source: packages/engine/src/services/frameCapture.ts and browserManager.ts - HeadlessExperimental.beginFrame primary path with Page.captureScreenshot fallback.",
+      "Source: packages/engine/src/services/videoFrameExtractor.ts / videoFrameInjector.ts - videos pre-extracted by FFmpeg and replaced with <img> during capture.",
+      "Source: packages/cli/src/commands/render.ts - exact CLI flags and defaults (fps, quality looks/CRF16, workers auto, formats, resolution semantics).",
+      "https://hyperframes.heygen.com/quickstart - the current quickstart paths (Studio app, agent skills, AI chat) and the npx hyperframes init/preview/render loop."
+    ],
+    "open_questions": [
+      "What is the real throughput of a 28 s 1080x1920@60 composition with kinetic captions on this workstation (no documented 9:16 60 fps number exists)?",
+      "How large is the byte-level drift between two machines rendering the same project without Docker, and is it visible after H.264 at delivery bitrates?",
+      "Does the AWS Lambda adapter's cost per 28 s 1080x1920@60 render beat a local multi-worker render for this volume?",
+      "How stable is the CLI/API surface across 0.9.x minor bumps in practice, and how often do golden baselines break on upgrade?"
+    ]
+  },
+  "uncertain": [
+    "maturity",
+    "performance_and_cost"
+  ]
+}
