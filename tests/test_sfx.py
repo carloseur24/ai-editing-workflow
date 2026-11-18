@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 
 from fenixsoft.stages import sfx
 
@@ -110,6 +112,35 @@ class CueSheetTest(unittest.TestCase):
         ids = {c["id"] for c in sfx.evaluate(cues, 0.0, 0.0, _policy())}
         self.assertIn("sd_peak", ids)
         self.assertIn("sd_bed", ids)
+
+
+class ProceduralLibraryTest(unittest.TestCase):
+    def test_install_writes_every_synthesised_role(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            library = Path(tmp)
+            written = sfx.install_library(library, force=True)
+        self.assertEqual({p.name for p in written},
+                         {f"fenix_{role}.wav" for role in sfx.SYNTH_ROLES})
+
+    def test_every_commercial_only_role_has_a_fallback(self):
+        manifest, _ = sfx.load_manifest({})
+        for role, entry in (manifest.get("roles") or {}).items():
+            generated = [f for f in entry.get("files", [])
+                         if f.startswith("fenix_sfx/")]
+            if not generated:
+                with self.subTest(role=role):
+                    self.assertTrue(entry.get("fallback"),
+                                    f"{role} needs a procedural fallback")
+
+    def test_fallback_resolves_after_install(self):
+        manifest, _ = sfx.load_manifest({})
+        with tempfile.TemporaryDirectory() as tmp:
+            library = Path(tmp)
+            sfx.install_library(library, force=True)
+            for role in ("impact_braam", "stinger_final", "ui_data"):
+                files, _ = sfx.resolve_role(manifest, library, role)
+                with self.subTest(role=role):
+                    self.assertEqual(files[0].name, f"fenix_{role}.wav")
 
 
 if __name__ == "__main__":
