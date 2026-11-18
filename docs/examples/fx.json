@@ -1,0 +1,8 @@
+{"input": "input/<project>/clips/a.mp4", "width": 1080, "height": 1920,
+ "fps": 60, "start": 0, "duration": 3,
+ "effects": [
+   {"type": "particles", "start": 0, "end": 3, "count": 60,
+    "color": "#10B981", "size": 4, "speed": 120, "gravity": 200, "seed": 7},
+   {"type": "glitch", "start": 0.4, "end": 1.0, "intensity": 0.5},
+   {"type": "shatter", "start": 1.8, "end": 2.4, "tiles": 8, "intensity": 0.7}
+ ]}
