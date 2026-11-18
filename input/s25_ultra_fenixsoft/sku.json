@@ -6,10 +6,69 @@
   "footer": "",
   "safe_zone_mode": "reels_universal",
   "allow_fast_captions": true,
-  "voiceover": "voice.mp3",
+  "voiceover": null,
   "script_text": "Te presento al gigante, Samsung Galaxy S25 Ultra de 512 GB con el brutal Snapdragon 8 Elite. Mira el nivel de control con este stylus. Observa la pura potencia que lleva adentro. Su pantalla Dynamic AMOLED 2X es una locura visual. Y esa cámara de 200 megapíxeles destruye la competencia.",
   "display_merge": {
     "512 GB": "512GB",
     "200 MEGAPIXELES": "200MP"
-  }
+  },
+  "duration_sec": 33,
+  "text_cards": [
+    {
+      "text": "GALAXY S25 ULTRA",
+      "sub": "512GB · SNAPDRAGON 8 ELITE",
+      "start": 0.7,
+      "end": 5.1,
+      "size": 86,
+      "sub_size": 32,
+      "enter_sec": 0.55,
+      "exit_sec": 0.3,
+      "rise_px": 26
+    },
+    {
+      "text": "UNBOXING",
+      "sub": "CAJA OFICIAL · 512GB",
+      "start": 6.1,
+      "end": 10.9,
+      "size": 82,
+      "sub_size": 34,
+      "enter_sec": 0.45,
+      "exit_sec": 0.3,
+      "rise_px": 24
+    },
+    {
+      "text": "TITANIO",
+      "sub": "S PEN INTEGRADO",
+      "start": 12.1,
+      "end": 16.9,
+      "size": 78,
+      "sub_size": 34,
+      "enter_sec": 0.45,
+      "exit_sec": 0.3,
+      "rise_px": 24
+    },
+    {
+      "text": "DYNAMIC AMOLED 2X",
+      "sub": "SNAPDRAGON 8 ELITE",
+      "zone": "lower",
+      "start": 18.1,
+      "end": 22.4,
+      "size": 60,
+      "sub_size": 34,
+      "enter_sec": 0.45,
+      "exit_sec": 0.3,
+      "rise_px": 22
+    },
+    {
+      "text": "CÁMARA 200MP",
+      "sub": "ESCRÍBENOS @FENIXSOFT",
+      "start": 24.0,
+      "end": 31.4,
+      "size": 66,
+      "sub_size": 34,
+      "enter_sec": 0.55,
+      "exit_sec": 0.4,
+      "rise_px": 24
+    }
+  ]
 }
