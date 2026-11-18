@@ -43,6 +43,9 @@ import sys
 from pathlib import Path
 
 from ..context import (DEFAULT_CONFIG, artifact, load_config, resolve_sku_dir)
+from ..domain import shots as shots_mod
+from ..domain.quality import probe_duration
+from ..domain.voice import explicit_duration, is_music_only
 from ..domain.narration import build_lines
 from ..domain.quality import cached_scan, window_stats
 from .beat_grid import load_grid
@@ -217,8 +220,118 @@ def pick_window(clip_name: str, cut_dur: float, cand: dict,
     return max(options, key=lambda o: o["rank"])
 
 
-def plan(sku_dir: Path, cfg: dict, dry_run: bool) -> dict:
+def _plan_locked(sku_dir: Path, sku: dict, brief: dict, shots: list[dict],
+                 cfg: dict, dry_run: bool, force: bool, plan_path: Path,
+                 existing: dict) -> dict:
+    """Write the cuts exactly as ``brief.story.shots`` orders them."""
+    sh_cfg = {**shots_mod.DEFAULTS, **(cfg.get("shots") or {})}
+    durations: dict[str, float] = {}
+    for name in sorted({s["clip"] for s in shots if s.get("clip")}):
+        path = sku_dir / "clips" / name
+        if path.exists():
+            durations[name] = probe_duration(path)
+    duration = explicit_duration(sku, brief, cfg)
+    rows = shots_mod.validate_shots(
+        shots, durations, duration,
+        min_dur=float(cfg.get("min_cut_sec", 1.2) or 0.0),
+        source_tolerance=float(sh_cfg["source_tolerance_sec"]),
+        sum_tolerance=float(sh_cfg["sum_tolerance_sec"]))
+    ok = shots_mod.shots_pass(rows)
+    payload = shots_mod.locked_plan(shots, sku_dir.name, duration_sec=duration)
+    result = {
+        "sku": sku_dir.name,
+        "locked": True,
+        "order_source": "brief",
+        "duration_sec": round(duration, 3),
+        "cuts_per_video": len(payload["cuts"]),
+        "total_sec": payload["duration_sec"],
+        "narration_source": "brief.story.shots",
+        "picks": "locked by brief",
+        "checks": {r["id"]: r["pass"] for r in rows},
+        "rows": rows,
+        "notes": [],
+        "unchanged": False,
+        "cuts": payload["cuts"],
+        "pass": ok,
+    }
+    if dry_run or not ok:
+        return result
+    same_cuts = (existing.get("locked")
+                 and shots_mod.plan_cuts_match(existing, shots))
+    same_total = abs(float(existing.get("duration_sec") or 0)
+                     - payload["duration_sec"]) < 1e-6
+    if same_cuts and same_total and not force:
+        result["unchanged"] = True
+        return result
+    prev = plan_path.with_name("edit_plan.prev.json")
+    old_cuts = [{k: c.get(k) for k in ("clip", "in", "dur")}
+                for c in existing.get("cuts") or []]
+    new_cuts = [{k: c.get(k) for k in ("clip", "in", "dur")}
+                for c in payload["cuts"]]
+    if old_cuts and old_cuts != new_cuts:
+        prev.write_text(plan_path.read_text(encoding="utf-8"), encoding="utf-8")
+    plan_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2),
+                         encoding="utf-8")
+    out = artifact(sku_dir, "plan_edit.json")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(result, ensure_ascii=False, indent=2),
+                   encoding="utf-8")
+    return result
+
+
+def plan(sku_dir: Path, cfg: dict, dry_run: bool,
+         force: bool = False) -> dict:
     sku = json.loads((sku_dir / "sku.json").read_text(encoding="utf-8"))
+    plan_path = sku_dir / "edit_plan.json"
+    existing: dict = {}
+    if plan_path.exists():
+        try:
+            existing = json.loads(plan_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            existing = {}
+    brief = {}
+    brief_path = sku_dir / "brief.json"
+    if brief_path.exists():
+        try:
+            brief = json.loads(brief_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            brief = {}
+
+    shots = shots_mod.shots_from_brief(brief)
+    if shots_mod.is_manual_plan(existing) and not force:
+        cuts = existing.get("cuts") or []
+        return {
+            "sku": sku_dir.name,
+            "locked": True,
+            "manual": True,
+            "skipped_manual": True,
+            "generated_by": existing.get("generated_by"),
+            "cuts_per_video": len(cuts),
+            "total_sec": round(sum(float(c.get("dur") or 0.0)
+                                   for c in cuts), 3),
+            "cuts": cuts,
+            "checks": {"manual_plan_kept": True},
+            "notes": [],
+            "pass": True,
+        }
+    if shots:
+        return _plan_locked(sku_dir, sku, brief, shots, cfg, dry_run, force,
+                            plan_path, existing)
+    if existing.get("locked") and not force:
+        return {"sku": sku_dir.name, "locked": True, "skipped_locked": True,
+                "cuts_per_video": len(existing.get("cuts") or []),
+                "total_sec": float(existing.get("duration_sec") or 0.0),
+                "cuts": existing.get("cuts") or [],
+                "checks": {"locked_plan_kept": True}, "notes": [],
+                "pass": True}
+    if is_music_only(sku):
+        sys.exit("[ERROR] music-only project: there are no voiceover lines to "
+                 "derive cut durations from. Add an ordered shot table to "
+                 f"{brief_path}:\n"
+                 '  "story": {"shots": [{"clip": "a.mp4", "in": 0, '
+                 '"dur": 3.0}]}\n'
+                 "then run `fenix storyboard <project>` and `fenix plan <project>`")
+
     timings_path = sku_dir / "word_timings.json"
     if not timings_path.exists():
         sys.exit(f"[ERROR] missing {timings_path}; run `fenix align <sku>` first")
@@ -384,15 +497,49 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument("--dry-run", action="store_true",
                         help="print the plan without writing edit_plan.json")
+    parser.add_argument("--force", action="store_true",
+                        help="re-plan even when edit_plan.json is locked")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
 
-    cfg = load_config(args.config)
     sku_dir = resolve_sku_dir(args.sku_dir)
-    result = plan(sku_dir, cfg, args.dry_run)
+    cfg = load_config(args.config, project=sku_dir)
+    result = plan(sku_dir, cfg, args.dry_run, force=args.force)
 
     if args.json:
         print(json.dumps(result, indent=2))
+    elif result.get("skipped_manual"):
+        generated = result.get("generated_by")
+        print(f"[plan] {sku_dir / 'edit_plan.json'} is hand-locked"
+              + (f" (generated_by: {generated!r})" if generated else "")
+              + f": {result.get('cuts_per_video')} cuts, "
+              f"{result.get('total_sec', 0):.2f}s; left untouched.")
+        print("[plan] pass --force to replace it with a planned cut list.")
+    elif result.get("skipped_locked"):
+        print(f"[plan] {sku_dir / 'edit_plan.json'} is locked "
+              f"({result.get('cuts_per_video')} cuts, "
+              f"{result.get('total_sec', 0):.2f}s); left untouched.")
+        print("[plan] edit input/<sku>/brief.json story.shots to change the "
+              "order, or pass --force to re-plan from narration.")
+    elif result.get("locked"):
+        print(f"[plan] order locked by brief.story.shots: "
+              f"{result['cuts_per_video']} cuts, {result['total_sec']:.2f}s")
+        print(f"{'#':>2} {'t0':>6} {'dur':>5} {'clip':<40} {'in':>6}  label")
+        for cut in result["cuts"]:
+            print(f"{cut['line']:>2} {cut['t0']:>6.2f} {cut['dur']:>5.2f} "
+                  f"{cut['clip']:<40} {cut['in']:>6.2f}  {cut.get('text', '')[:40]}")
+        for row in result["rows"]:
+            print(f"[{'PASS' if row['pass'] else 'FAIL'}] {row['id']:<14} "
+                  f"{row['measured']}")
+            if not row["pass"] and row["fix"]:
+                print(f"        fix: {row['fix']}")
+        print(f"\nRESULT: {'PASS' if result['pass'] else 'FAIL'}")
+        if not args.dry_run and result["pass"]:
+            if result.get("unchanged"):
+                print(f"[plan] {sku_dir / 'edit_plan.json'} already matches the "
+                      f"brief; nothing rewritten")
+            else:
+                print(f"[plan] wrote {sku_dir / 'edit_plan.json'} (locked)")
     else:
         print(f"[plan] {result['cuts_per_video']} cuts, "
               f"{result['total_sec']:.2f}s; narration from "
