@@ -1,0 +1,12 @@
+{
+  "input": "output/<project>/<run>/<run>_final.mp4",
+  "lut": "assets/luts/editorial.cube",
+  "eq": {"contrast": 1.06, "saturation": 1.08, "gamma": 1.0, "brightness": 0.0},
+  "temperature": 0.0,
+  "shot_match": {"reference": "assets/stills/hero.png", "reference_frame": 0,
+                 "sample_frame": 5, "strength": 0.6},
+  "secondaries": [{"color": "#1E90FF", "similarity": 0.3, "blend": 0.1,
+                   "hue": 140, "saturation": 1.2}],
+  "fade_in": 0.0,
+  "fade_out": 0.0
+}
