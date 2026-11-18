@@ -37,6 +37,7 @@ STAGE_COMMANDS = {
 
 OPS_COMMANDS = {
     "batch_run": "batch",
+    "bundle": None,          # shared delivery planner, no fenix command
     "deliver": "deliver",
     "doctor": "doctor",
     "finish": "finish",
