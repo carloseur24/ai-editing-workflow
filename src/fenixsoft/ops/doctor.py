@@ -72,7 +72,8 @@ def main(argv: list[str] | None = None) -> None:
         warnings.append(f"no music bed in {MUSIC_DIR} "
                         "(drop one there or set music.file)")
     if not sfx:
-        warnings.append(f"no SFX in {SFX_DIR}")
+        warnings.append(f"no legacy SFX in {SFX_DIR} "
+                        "(the cue-sheet library is separate)")
 
     motion = (sorted(p.name for p in (ASSETS_DIR / "motion").glob("*.png"))
               if (ASSETS_DIR / "motion").exists() else [])
@@ -165,7 +166,7 @@ def main(argv: list[str] | None = None) -> None:
         print(f"assets      {ASSETS_DIR}")
         print(f"fonts       {len(fonts)} file(s) in {FONTS_DIR}")
         print(f"music       {', '.join(music) or 'none'}")
-        print(f"sfx         {', '.join(sfx) or 'none'}")
+        print(f"sfx         {', '.join(sfx) or 'none (legacy; see sfx library)'}")
         print(f"motion      {len(motion)} texture(s) in {ASSETS_DIR / 'motion'}")
         hf_label = (f"gsap.min.js -> {ASSETS_DIR / 'hf'}"
                     if hf_runtime else "MISSING (assets/hf/gsap.min.js)")
