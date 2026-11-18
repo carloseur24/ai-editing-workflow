@@ -24,6 +24,7 @@ import hashlib
 import json
 import math
 import random
+import re
 import shutil
 import subprocess
 import sys
@@ -40,10 +41,14 @@ from PIL import Image, ImageDraw, ImageFont
 from ..context import (CACHE_DIR, DEFAULT_CONFIG, FONTS_DIR, MUSIC_DIR,
                        artifact, load_config, repo_path, resolve_sku_dir)
 from ..domain import runs
+from ..domain import safe_zones
+from ..domain import text_cards
 from ..domain.config_slices import render_slices
 from ..domain.quality import (cached_scan, frame_sharpness,
                               normalized_clip_path, window_stats)
+from ..domain.voice import explicit_duration, is_music_only
 from ..stages.beat_grid import cached_measure, load_grid, nearest_beat, write_grid
+from . import transitions
 
 CACHE = CACHE_DIR
 FONT_DIR = FONTS_DIR
@@ -310,36 +315,51 @@ def build_overlay(cfg: dict, sku: dict, fonts: FontBook) -> dict:
     f_badge = fonts.at("Inter-Bold.ttf", typo["badge_size"])
     f_footer = fonts.at("Inter-Bold.ttf", typo["footer_size"])
 
-    # ---- title / subtitle (auto-fit inside the safe zone)
-    title = sku.get("title", "")
-    subtitle = sku.get("subtitle", "")
-    f_title, size = fonts.fit(title, "Inter-Black.ttf",
-                              typo["title_size"], zone_w, typo["min_size"])
-    if size < typo["title_size"]:
-        warnings.append(f"title shrunk to {size}px to fit {zone_w}px")
-    tw, _, tb = fonts.measure(title, f_title)
-    tx = cx - tw // 2 - tb[0]
-    layout["title"] = {"text": title, "x": int(tx), "y": int(sz["title_y"]),
-                       "size": int(size), "width": int(tw)}
-    draw.text((tx + 2, sz["title_y"] + 2), title, font=f_title,
-              fill=(0, 0, 0, 200))
-    draw.text((tx, sz["title_y"]), title, font=f_title, fill="#FFFFFF")
+    # Absent fields get a zero-size layout entry and are never drawn. An empty
+    # price pill or a blank title used to ship as a visible block: the alpha
+    # layer is what the contact sheet and the QA pill sample read.
+    zero_text = {"text": "", "x": 0, "y": 0, "size": 0, "width": 0}
+    layout["title"] = dict(zero_text)
+    layout["subtitle"] = dict(zero_text)
+    layout["footer"] = dict(zero_text)
+    layout["price"] = {"text": "", "x0": 0, "y0": 0, "x1": 0, "y1": 0,
+                       "size": 0, "radius": 24, "pad_x": 38, "pad_y": 16}
 
-    f_sub, size = fonts.fit(subtitle, "Inter-Bold.ttf",
-                            typo["subtitle_size"], zone_w, typo["min_size"])
-    if size < typo["subtitle_size"]:
-        warnings.append(f"subtitle shrunk to {size}px")
-    sw, _, sb = fonts.measure(subtitle, f_sub)
-    layout["subtitle"] = {"text": subtitle, "x": int(cx - sw // 2 - sb[0]),
-                          "y": int(sz["sub_y"]), "size": int(size),
-                          "width": int(sw)}
-    draw.text((cx - sw // 2 - sb[0] + 2, sz["sub_y"] + 2), subtitle,
-              font=f_sub, fill=(0, 0, 0, 190))
-    draw.text((cx - sw // 2 - sb[0], sz["sub_y"]), subtitle,
-              font=f_sub, fill="#6EE7B7")
+    # ---- title / subtitle (auto-fit inside the safe zone)
+    title = str(sku.get("title") or "").strip()
+    subtitle = str(sku.get("subtitle") or "").strip()
+    if title:
+        f_title, size = fonts.fit(title, "Inter-Black.ttf",
+                                  typo["title_size"], zone_w, typo["min_size"])
+        if size < typo["title_size"]:
+            warnings.append(f"title shrunk to {size}px to fit {zone_w}px")
+        tw, _, tb = fonts.measure(title, f_title)
+        tx = cx - tw // 2 - tb[0]
+        layout["title"] = {"text": title, "x": int(tx),
+                           "y": int(sz["title_y"]), "size": int(size),
+                           "width": int(tw)}
+        draw.text((tx + 2, sz["title_y"] + 2), title, font=f_title,
+                  fill=(0, 0, 0, 200))
+        draw.text((tx, sz["title_y"]), title, font=f_title, fill="#FFFFFF")
+
+    if subtitle:
+        f_sub, size = fonts.fit(subtitle, "Inter-Bold.ttf",
+                                typo["subtitle_size"], zone_w, typo["min_size"])
+        if size < typo["subtitle_size"]:
+            warnings.append(f"subtitle shrunk to {size}px")
+        sw, _, sb = fonts.measure(subtitle, f_sub)
+        layout["subtitle"] = {"text": subtitle,
+                              "x": int(cx - sw // 2 - sb[0]),
+                              "y": int(sz["sub_y"]), "size": int(size),
+                              "width": int(sw)}
+        draw.text((cx - sw // 2 - sb[0] + 2, sz["sub_y"] + 2), subtitle,
+                  font=f_sub, fill=(0, 0, 0, 190))
+        draw.text((cx - sw // 2 - sb[0], sz["sub_y"]), subtitle,
+                  font=f_sub, fill="#6EE7B7")
 
     # ---- badges: rows centred on the canvas axis, wrapping inside the zone
-    badges = sku.get("badges", [])[:3]
+    badges = [str(b).strip() for b in (sku.get("badges") or [])[:3]
+              if str(b).strip()]
     widths = [badge_width(b, f_badge) for b in badges]
     rows: list[list[tuple[str, int]]] = []
     cur: list[tuple[str, int]] = []
@@ -363,43 +383,49 @@ def build_overlay(cfg: dict, sku: dict, fonts: FontBook) -> dict:
             row_h = max(row_h, bh)
             bx += bw + 14
         by += row_h + 10
-    if by > sz["price_y"] - 12:
+    if by > sz["price_y"] - 12 and str(sku.get("price_label") or "").strip():
         warnings.append(f"badge block reaches y={by}, "
                         f"too close to price at y={sz['price_y']}")
 
     # ---- price pill
-    f_price, size = fonts.fit(sku["price_label"], "Inter-Black.ttf",
-                              typo["price_size"], zone_w - 76, typo["min_size"])
-    if size < typo["price_size"]:
-        warnings.append(f"price shrunk to {size}px")
-    pbox = draw_ink_pill(draw, cx, sz["price_y"], sku["price_label"], f_price,
-                         cfg["colors"]["emerald_primary"], "#FFFFFF",
-                         pad_x=38, pad_y=16, radius=24)
-    layout["price"] = {"text": sku["price_label"], "x0": int(pbox[0]),
-                       "y0": int(pbox[1]), "x1": int(pbox[2]),
-                       "y1": int(pbox[3]), "size": int(size), "radius": 24,
-                       "pad_x": 38, "pad_y": 16}
+    price = str(sku.get("price_label") or "").strip()
+    pbox = None
+    if price:
+        f_price, size = fonts.fit(price, "Inter-Black.ttf",
+                                  typo["price_size"], zone_w - 76,
+                                  typo["min_size"])
+        if size < typo["price_size"]:
+            warnings.append(f"price shrunk to {size}px")
+        pbox = draw_ink_pill(draw, cx, sz["price_y"], price, f_price,
+                             cfg["colors"]["emerald_primary"], "#FFFFFF",
+                             pad_x=38, pad_y=16, radius=24)
+        layout["price"] = {"text": price, "x0": int(pbox[0]),
+                           "y0": int(pbox[1]), "x1": int(pbox[2]),
+                           "y1": int(pbox[3]), "size": int(size), "radius": 24,
+                           "pad_x": 38, "pad_y": 16}
 
     # ---- footer
-    footer = sku.get("footer", "@fenixsoft • Mercado Social Local C-29")
-    f_footer, size = fonts.fit(footer, "Inter-Bold.ttf", typo["footer_size"],
-                               zone_w, typo["min_size"])
-    fw, _, fb = fonts.measure(footer, f_footer)
-    layout["footer"] = {"text": footer, "x": int(cx - fw // 2 - fb[0]),
-                        "y": int(sz["footer_y"]), "size": int(size),
-                        "width": int(fw)}
-    draw.text((cx - fw // 2 - fb[0] + 2, sz["footer_y"] + 2), footer,
-              font=f_footer, fill=(0, 0, 0, 210))
-    draw.text((cx - fw // 2 - fb[0], sz["footer_y"]), footer,
-              font=f_footer, fill="#FFFFFF")
+    footer = str(sku.get("footer") or "").strip()
+    if footer:
+        f_footer, size = fonts.fit(footer, "Inter-Bold.ttf", typo["footer_size"],
+                                   zone_w, typo["min_size"])
+        fw, _, fb = fonts.measure(footer, f_footer)
+        layout["footer"] = {"text": footer, "x": int(cx - fw // 2 - fb[0]),
+                            "y": int(sz["footer_y"]), "size": int(size),
+                            "width": int(fw)}
+        draw.text((cx - fw // 2 - fb[0] + 2, sz["footer_y"] + 2), footer,
+                  font=f_footer, fill=(0, 0, 0, 210))
+        draw.text((cx - fw // 2 - fb[0], sz["footer_y"]), footer,
+                  font=f_footer, fill="#FFFFFF")
 
     # ---- layout assertions (bottom stack must not collide)
-    caption_gap = sz["caption_y"] - pbox[3]
-    if caption_gap < 10:
-        warnings.append(f"price pill bottom y={pbox[3]} overlaps captions "
-                        f"at y={sz['caption_y']}")
-    if pbox[0] < sz["x_min"] or pbox[2] > sz["x_max"]:
-        warnings.append("price pill exceeds safe-zone width")
+    if pbox is not None:
+        caption_gap = sz["caption_y"] - pbox[3]
+        if caption_gap < 10:
+            warnings.append(f"price pill bottom y={pbox[3]} overlaps captions "
+                            f"at y={sz['caption_y']}")
+        if pbox[0] < sz["x_min"] or pbox[2] > sz["x_max"]:
+            warnings.append("price pill exceeds safe-zone width")
 
     rgba = np.array(img)
     return {
@@ -779,6 +805,100 @@ class CaptionRenderer:
         blend_region(canvas, bgr, alpha, x0, y0)
 
 
+class TextCardRenderer:
+    """Native timed title/spec cards drawn straight into the edit frames.
+
+    A card is white title + mint spec, top-centred, with a fade-and-rise enter
+    and a fade exit. It replaces the "render a full-length motion plate, then
+    composite it" path for text-only shots: the plate cost 5.5 min per 33 s at
+    ProRes 4444 and the comp doubled the file, while the text itself only
+    changes at discrete moments.
+
+    Cards are drawn natively even when ``--hf-overlay`` is active: the
+    HyperFrames layer owns the static header + captions, the cards stay here so
+    one transport failure cannot drop the spec text.
+    """
+
+    def __init__(self, cfg: dict, overlay: dict, fonts: FontBook,
+                 cards: list[dict] | None = None):
+        self.cfg = cfg
+        self.sz = overlay["zone"]
+        self.cx = overlay["cx"]
+        self.fonts = fonts
+        self.mode = overlay.get("mode") or "reels_universal"
+        self.defaults = cfg.get("text_cards") or {}
+        self.cards = text_cards.normalize(
+            cards or [], self.defaults,
+            zone_resolver=lambda zone, size: safe_zones.zone_y(
+                zone, cfg, mode=self.mode, size=size))
+        self.cache: dict[tuple, tuple] = {}
+        self.warnings: list[str] = []
+
+    def _patch(self, card: dict) -> tuple[np.ndarray, np.ndarray]:
+        key = (card["text"], card["sub"], card["size"], card["sub_size"],
+               card["color"], card["sub_color"], card["shadow"])
+        if key in self.cache:
+            return self.cache[key]
+        scratch = ImageDraw.Draw(Image.new("RGBA", (8, 8)))
+        f_title = self.fonts.at("Inter-Black.ttf", int(card["size"]))
+        f_sub = self.fonts.at("Inter-Bold.ttf", int(card["sub_size"]))
+        tb = scratch.textbbox((0, 0), card["text"], font=f_title) \
+            if card["text"] else (0, 0, 0, 0)
+        sb = scratch.textbbox((0, 0), card["sub"], font=f_sub) \
+            if card["sub"] else (0, 0, 0, 0)
+        tw, th = tb[2] - tb[0], tb[3] - tb[1]
+        sw, sh = sb[2] - sb[0], sb[3] - sb[1]
+        gap = int(round(float(card["size"]) * float(card["sub_gap_ratio"])))
+        block_w = max(tw, sw) + 8
+        block_h = th + ((gap + sh) if card["sub"] else 0) + 8
+        img = Image.new("RGBA", (max(1, block_w), max(1, block_h)),
+                        (0, 0, 0, 0))
+        d = ImageDraw.Draw(img)
+        if card["text"]:
+            x = (block_w - tw) // 2 - tb[0]
+            y = 2 - tb[1]
+            if card["shadow"]:
+                d.text((x + 2, y + 2), card["text"], font=f_title,
+                       fill=(0, 0, 0, 200))
+            d.text((x, y), card["text"], font=f_title, fill=card["color"])
+        if card["sub"]:
+            x = (block_w - sw) // 2 - sb[0]
+            y = th + gap + 2 - sb[1]
+            if card["shadow"]:
+                d.text((x + 2, y + 2), card["sub"], font=f_sub,
+                       fill=(0, 0, 0, 190))
+            d.text((x, y), card["sub"], font=f_sub, fill=card["sub_color"])
+        arr = np.array(img)
+        out = (arr[:, :, 2::-1].copy(), arr[:, :, 3].astype(np.uint8))
+        self.cache[key] = out
+        return out
+
+    def draw(self, canvas: np.ndarray, t: float,
+             zone: str | None = None) -> int:
+        """Draw every card visible at ``t``; returns how many were drawn.
+
+        ``zone`` is the current shot's ``text_zone``: a card without its own
+        ``y``/``zone`` follows the scene's band (e.g. the spec for the settings
+        shot drops to the lower third instead of sitting on the list).
+        """
+        drawn = 0
+        for card, alpha, rise in text_cards.active_at(self.cards, t):
+            if alpha <= 0.004:
+                continue
+            bgr, base = self._patch(card)
+            a = (base.astype(np.uint16) * int(round(alpha * 255)) // 255
+                 ).astype(np.uint8)
+            x0 = int(self.cx - bgr.shape[1] // 2)
+            y0 = int(text_cards.resolve_y(card, zone, mode=self.mode,
+                                          cfg=self.cfg) + rise)
+            blend_region(canvas, bgr, a, x0, y0)
+            drawn += 1
+        return drawn
+
+    def audit(self) -> dict:
+        return text_cards.audit(self.cards)
+
+
 # ------------------------------------------------------------------ blend
 class OverlayCompositor:
     """Composites the static overlay fast.
@@ -1039,12 +1159,57 @@ def write_wav_f32(path: Path, samples: np.ndarray, sr: int) -> None:
         input=samples.astype(np.float32).tobytes())
 
 
+def peak_dbfs(path: Path) -> float:
+    """Sample peak of a file in dBFS (``volumedetect``), -99 when silent."""
+    proc = subprocess.run([
+        "ffmpeg", "-hide_banner", "-nostats", "-i", str(path),
+        "-af", "volumedetect", "-f", "null", "-",
+    ], capture_output=True, text=True)
+    match = re.search(r"max_volume:\s*(-?[0-9.]+) dB", proc.stderr)
+    return float(match.group(1)) if match else -99.0
+
+
+def audio_filter_graph(cfg: dict, total: float, *,
+                       voice: bool = True) -> str:
+    """The mix graph; ``voice=False`` mixes music + SFX with no VO input.
+
+    Kept separate from ffmpeg so the music-only branch is testable: with no
+    voice there is no sidechain key, and the graph must take two inputs.
+    """
+    audio = cfg["audio"]
+    bake = ("aformat=sample_fmts=fltp:sample_rates=48000:"
+            "channel_layouts=stereo")
+    duck = (f"sidechaincompress=threshold={audio.get('duck_threshold', 0.03)}:"
+            f"ratio={audio.get('duck_ratio', 6)}:"
+            f"attack={audio.get('duck_attack_ms', 8)}:"
+            f"release={audio.get('duck_release_ms', 350)}")
+    tail = (f"atrim=0:{total:.3f},asetpts=N/SR/TB[out]")
+    if voice:
+        return (
+            f"[1:a]{bake},asplit=2[vo][key];"
+            f"[0:a]{bake}[mus];"
+            f"[mus][key]{duck}[duck];"
+            f"[2:a]{bake}[sfx];"
+            "[duck][vo][sfx]amix=inputs=3:duration=longest:normalize=0,"
+            + tail)
+    return (
+        f"[0:a]{bake}[mus];"
+        f"[1:a]{bake}[sfx];"
+        "[mus][sfx]amix=inputs=2:duration=longest:normalize=0,"
+        + tail)
+
+
 def build_audio(cfg: dict, sku_dir: Path, total: float, cuts: list[dict],
-                tmp: Path) -> tuple[Path, dict]:
+                tmp: Path, music_only: bool = False) -> tuple[Path, dict]:
     audio = cfg["audio"]
     vo = sku_dir / "voice_28s.wav"
-    if not vo.exists():
+    if not music_only and not vo.exists():
         sys.exit(f"[ERROR] Missing {vo}; run 'fenix align {sku_dir.name}' first")
+    mo = audio.get("music_only") or {}
+    # A music-only mix sits lower than a voice-led one: the bed is the piece,
+    # not a bed under speech.
+    bed_target = (float(mo.get("bed_lufs", -18.0)) if music_only
+                  else float(audio.get("music_bed_lufs", -28.0)))
 
     music_cfg = cfg.get("music", {})
     music_path = repo_path(music_cfg.get("file") or "")
@@ -1053,7 +1218,8 @@ def build_audio(cfg: dict, sku_dir: Path, total: float, cuts: list[dict],
         pool = [p for p in pool if p.suffix.lower() in (".wav", ".mp3", ".m4a")]
         music_path = pool[0] if pool else None
 
-    notes: dict = {"music": None, "sfx": None}
+    notes: dict = {"music": None, "sfx": None, "voice": None if music_only
+                   else vo.name}
     assets = sfx_artifacts(cfg, sku_dir, total)
 
     # music bed: prefer the cue-sheet stage's already-ducked/vacuumed bed.
@@ -1072,8 +1238,7 @@ def build_audio(cfg: dict, sku_dir: Path, total: float, cuts: list[dict],
         run(["ffmpeg", "-y", "-v", "error", "-stream_loop", "-1", "-i",
              str(music_path), "-t", f"{total:.3f}", "-vn",
              "-ar", "48000", "-ac", "2", str(bed)])
-        gain = static_gain_to_lufs(bed, tmp / "_music_bed_lvl.wav",
-                                   float(audio.get("music_bed_lufs", -28.0)))
+        gain = static_gain_to_lufs(bed, tmp / "_music_bed_lvl.wav", bed_target)
         fade_in = float(audio.get("music_fade_in_sec", 0.25))
         fade_out = float(audio.get("music_fade_out_sec", 0.7))
         faded = tmp / "_music_bed_faded.wav"
@@ -1084,14 +1249,21 @@ def build_audio(cfg: dict, sku_dir: Path, total: float, cuts: list[dict],
         faded.replace(tmp / "_music_bed_lvl.wav")
         notes["music"] = {"file": music_path.name,
                           "gain_db": round(gain, 2),
-                          "bed_lufs": audio.get("music_bed_lufs", -28.0)}
+                          "bed_lufs": bed_target}
     else:
         write_silence(tmp / "_music_bed_lvl.wav", total)
 
     sfx_bed = tmp / "_sfx_bed.wav"
+    sfx_af: list[str] = []
     if assets:
-        run(["ffmpeg", "-y", "-v", "error", "-i", str(assets["bus"]),
-             "-t", f"{total:.3f}", "-ar", "48000", "-ac", "2",
+        source = assets["bus"]
+        if music_only:
+            # Normalise the foreground bus to the music-only preset (peak
+            # -16 dBFS) instead of trusting a voice-led gain stage.
+            target = float(mo.get("sfx_dbfs", -16.0))
+            sfx_af = ["-af", f"volume={target - peak_dbfs(source):.2f}dB"]
+        run(["ffmpeg", "-y", "-v", "error", "-i", str(source),
+             "-t", f"{total:.3f}", "-ar", "48000", "-ac", "2", *sfx_af,
              "-c:a", "pcm_s16le", str(sfx_bed)])
         summary = assets["cue"].get("summary") or {}
         notes["sfx"] = {"mode": "cue_sheet",
@@ -1106,25 +1278,13 @@ def build_audio(cfg: dict, sku_dir: Path, total: float, cuts: list[dict],
                         "gain_db": audio.get("sfx_gain_db", -13.0),
                         "events": len(cuts)}
 
-    duck = (f"sidechaincompress=threshold={audio.get('duck_threshold', 0.03)}:"
-            f"ratio={audio.get('duck_ratio', 6)}:"
-            f"attack={audio.get('duck_attack_ms', 8)}:"
-            f"release={audio.get('duck_release_ms', 350)}")
-
     raw_mix = tmp / "_mix_raw.wav"
-    graph = (
-        "[1:a]aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,"
-        "asplit=2[vo][key];"
-        "[0:a]aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[mus];"
-        f"[mus][key]{duck}[duck];"
-        "[2:a]aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[sfx];"
-        "[duck][vo][sfx]amix=inputs=3:duration=longest:normalize=0,"
-        f"atrim=0:{total:.3f},asetpts=N/SR/TB[out]"
-    )
-    run(["ffmpeg", "-y", "-v", "error",
-         "-i", str(tmp / "_music_bed_lvl.wav"),
-         "-i", str(vo),
-         "-i", str(sfx_bed),
+    graph = audio_filter_graph(cfg, total, voice=not music_only)
+    inputs = ["-i", str(tmp / "_music_bed_lvl.wav")]
+    if not music_only:
+        inputs += ["-i", str(vo)]
+    inputs += ["-i", str(sfx_bed)]
+    run(["ffmpeg", "-y", "-v", "error", *inputs,
          "-filter_complex", graph, "-map", "[out]",
          "-ar", "48000", "-ac", "2", str(raw_mix)])
 
@@ -1238,7 +1398,8 @@ def load_cut_override(sku_dir: Path, clips: list[Path],
                      "t1": round(cursor + slot, 3), "clip": name,
                      "clip_path": clip_path, "in": round(in_pt, 3),
                      "dur": round(slot, 3), "score": None,
-                     "candidate": cid, "line": item.get("line")})
+                     "candidate": cid, "line": item.get("line"),
+                     "text_zone": item.get("text_zone")})
         cursor += slot
     if not cuts or cuts[0]["t0"] > 0.01:
         raise SystemExit("[ERROR] edit_plan.json produced no usable cuts")
@@ -1316,9 +1477,46 @@ def enforce_cut_quality(cuts: list[dict], cfg: dict, sku_dir: Path,
     return notes
 
 
+def _num(value, default: float) -> float:
+    if value is None or isinstance(value, bool):
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def load_text_cards(sku: dict, sku_dir: Path) -> list[dict]:
+    """Cards to draw: ``sku.text_cards`` first, else the storyboard's file.
+
+    ``fenix storyboard`` derives one card per locked shot and writes
+    ``output/<p>/text_cards.json``. A hand-authored ``sku.text_cards`` list
+    always wins, so an agent can override a single card without editing the
+    generated artifact. A malformed file is a warning, never a failed render.
+    """
+    authored = sku.get("text_cards")
+    if isinstance(authored, list) and authored:
+        return authored
+    path = artifact(sku_dir, "text_cards.json")
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"[render] WARNING: ignoring invalid {path}: {exc}")
+        return []
+    if isinstance(data, dict):
+        data = data.get("cards") or []
+    if not isinstance(data, list):
+        print(f"[render] WARNING: ignoring {path}: expected a card list")
+        return []
+    return data
+
+
 def render(cfg: dict, sku_dir: Path, out_mp4: Path,
            allow_soft_in: bool = False, hf: bool = False,
-           hf_workers: int = 4, draft: bool = False) -> dict:
+           hf_workers: int = 4, draft: bool = False,
+           transition: str | None = None) -> dict:
     t_start = time.time()
     stage_start = t_start
     stage_times: dict[str, float] = {}
@@ -1330,11 +1528,24 @@ def render(cfg: dict, sku_dir: Path, out_mp4: Path,
         stage_start = now
 
     sku = json.loads((sku_dir / "sku.json").read_text(encoding="utf-8"))
+    brief: dict = {}
+    brief_path = sku_dir / "brief.json"
+    if brief_path.exists():
+        try:
+            brief = json.loads(brief_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            brief = {}
+    music_only = is_music_only(sku)
     timings_path = sku_dir / "word_timings.json"
-    if not timings_path.exists():
+    if not timings_path.exists() and not music_only:
         sys.exit(f"[ERROR] Missing {timings_path}; run `fenix align <sku>` first")
-    timings = json.loads(timings_path.read_text(encoding="utf-8"))
-    words = timings.get("words", [])
+    timings: dict = {}
+    if timings_path.exists():
+        try:
+            timings = json.loads(timings_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            timings = {}
+    words = [] if music_only else (timings.get("words") or [])
 
     clips = sorted((sku_dir / "clips").glob("*.mp4"))
     if not clips:
@@ -1343,8 +1554,13 @@ def render(cfg: dict, sku_dir: Path, out_mp4: Path,
     W, H, FPS = cfg["canvas"]["width"], cfg["canvas"]["height"], cfg["canvas"]["fps"]
     target = float(cfg["target_duration_sec"])
     # Never truncate speech: the finished video follows the voiceover duration.
-    total = float(timings.get("duration_sec") or target)
+    # A music-only piece has no voice to follow, so its explicit duration wins.
+    total = (explicit_duration(sku, brief, cfg) if music_only
+             else float(timings.get("duration_sec") or target))
     total = max(2.0, total)
+    if music_only:
+        print(f"[render] music-only: {total:.2f}s, captions disabled "
+              f"(voiceover is {sku.get('voiceover')!r})")
 
     print(f"[render] normalising {len(clips)} clip(s) to {W}x{H}@{FPS} ...")
     grade = cfg.get("grade") if cfg.get("grade", {}).get("mode", "baked") == "baked" else None
@@ -1368,11 +1584,63 @@ def render(cfg: dict, sku_dir: Path, out_mp4: Path,
                          scores=scores, grid=grid)
         notes = []
     notes += enforce_cut_quality(cuts, cfg, sku_dir, grid, soft_ok)
+    if music_only and abs(sum(c["dur"] for c in cuts) - total) > 0.35:
+        print(f"[render] note: edit_plan.json cuts sum to "
+              f"{sum(c['dur'] for c in cuts):.2f}s but the music-only duration "
+              f"is {total:.2f}s; the last shot is extended/trimmed to match")
+
+    # Opt-in pre-roll transitions: the last `sec` of the outgoing shot blends
+    # into `sec` of handle before the incoming in-point, ending exactly at the
+    # cut. Default off; --transition enables one render, --no-transition off.
+    tcfg = dict(cfg.get("transitions") or {})
+    if transition is not None:
+        kind = str(transition).strip().lower()
+        tcfg["enabled"] = kind not in transitions.CUT_WORDS
+        if tcfg["enabled"]:
+            tcfg["default"] = kind
+    t_enabled = bool(tcfg.get("enabled", False))
+    t_sec = max(0.0, _num(tcfg.get("sec"), 0.35))
+    tplan: list[dict] = []
+    t_skipped: list[str] = []
+    if t_enabled and len(cuts) > 1:
+        tplan = transitions.transition_plan(
+            cuts, default=str(tcfg.get("default") or "dissolve"), sec=t_sec)
+        source_secs = {c.name: d for c, d in zip(clips, durations)}
+        kept: list[dict] = []
+        for entry in tplan:
+            incoming = cuts[entry["to_index"]]
+            in_point = float(incoming.get("in") or 0.0)
+            room = source_secs.get(str(incoming.get("clip")))
+            # The pre-roll borrows `sec` of handle *before* the in-point, so
+            # the cut still lands exactly on the planned in-point. A shot whose
+            # in-point is too close to the clip start cannot afford it.
+            if room is None or in_point - entry["sec"] < -1e-6:
+                handle = in_point
+                msg = (f"transition at {entry['at']:.2f}s skipped: "
+                       f"{incoming.get('clip')} has {handle:.2f}s of handle "
+                       f"before in={in_point:.2f}, needs {entry['sec']:.2f}s")
+                t_skipped.append(msg)
+                notes.append(msg)
+                continue
+            kept.append(entry)
+        tplan = kept
+    t_by_from = {entry["from_index"]: entry for entry in tplan}
+    # A transition replaces the punch-in on its incoming cut: the outgoing
+    # punch has already settled by the pre-roll window, and starting a 1.12x
+    # punch at the cut would snap against the blended frame. Shots that start
+    # with a transition are therefore punch-free; every other cut keeps it.
+    punch_free = {entry["to_index"] for entry in tplan}
+    if tplan:
+        kinds = ", ".join(sorted({entry["kind"] for entry in tplan}))
+        print(f"[render] transitions: {len(tplan)} pre-roll blend(s), "
+              f"{t_sec:.2f}s ({kinds})")
     mark("plan")
     fonts = FontBook()
     overlay = build_overlay(cfg, sku, fonts)
     compositor = OverlayCompositor(overlay)
     cap = CaptionRenderer(cfg, overlay, fonts)
+    cards = TextCardRenderer(cfg, overlay, fonts,
+                             load_text_cards(sku, sku_dir))
     kc = cfg["kinetic_captions"]
     chunks = group_words(words, int(kc["max_words_per_chunk"]),
                          int(kc["max_chars_per_chunk"]),
@@ -1381,18 +1649,25 @@ def render(cfg: dict, sku_dir: Path, out_mp4: Path,
 
     warnings = list(overlay["warnings"]) + list(cap.warnings) + notes
     max_extra = float((cfg.get("voiceover") or {}).get("max_extra_sec", 2.0))
-    if total > target + max_extra:
-        warnings.append(f"voiceover is {total:.2f}s, over the {target:.1f}s target "
-                        f"+{max_extra:.1f}s allowance (shorten the script)")
-    elif total > target + 0.15:
-        print(f"[render] {total:.2f}s: over the {target:.1f}s target but inside "
-              f"the +{max_extra:.1f}s allowance (last phrase kept intact)")
-    if not words:
+    if not music_only:
+        if total > target + max_extra:
+            warnings.append(f"voiceover is {total:.2f}s, over the {target:.1f}s target "
+                            f"+{max_extra:.1f}s allowance (shorten the script)")
+        elif total > target + 0.15:
+            print(f"[render] {total:.2f}s: over the {target:.1f}s target but inside "
+                  f"the +{max_extra:.1f}s allowance (last phrase kept intact)")
+    if not words and not music_only:
         warnings.append("no word timings: captions disabled")
-    caption_audit = build_caption_audit(chunks, cfg, cap, hold)
+    caption_audit = (
+        {"cards": [], "mean_cps": 0.0, "max_cps": 0.0, "cards_over_20cps": 0,
+         "cards_over_warn": 0,
+         "warn_cps": float((cfg.get("quality") or {}).get("caption_warn_cps", 20.0)),
+         "definition": "disabled: music-only project (no voiceover)",
+         "disabled": True, "reason": "music-only"}
+        if music_only else build_caption_audit(chunks, cfg, cap, hold))
     qcfg = quality_cfg(cfg)
-    if caption_audit["max_cps"] > qcfg["caption_fail_cps"] \
-            and not sku.get("allow_fast_captions"):
+    if (not music_only and caption_audit["max_cps"] > qcfg["caption_fail_cps"]
+            and not sku.get("allow_fast_captions")):
         worst = max(caption_audit["cards"], key=lambda c: c["cps"])
         warnings.append(
             f"caption #{worst['index']} '{worst['text']}' shows for "
@@ -1401,19 +1676,23 @@ def render(cfg: dict, sku_dir: Path, out_mp4: Path,
 
     tmp = Path(tempfile.mkdtemp(prefix="fenixsoft_"))
     try:
-        print("[render] building audio mix (music + ducked VO + SFX) ...")
-        mix, audio_notes = build_audio(cfg, sku_dir, total, cuts, tmp)
+        print("[render] building audio mix (music + ducked VO + SFX) ..."
+              if not music_only else
+              "[render] building music-only mix (bed + SFX, no VO) ...")
+        mix, audio_notes = build_audio(cfg, sku_dir, total, cuts, tmp,
+                                       music_only=music_only)
         mark("audio")
 
         # Optional HyperFrames text layer: a transparent WebM rendered by a
         # deterministic frame server, composited in the same encode pass.
         hf_notes: dict = {}
         hf_path: Path | None = None
-        if hf:
+        if hf and chunks:
             from . import hf_overlay
-            cards = cap.layout_cards(chunks, hold)
-            info = hf_overlay.ensure_overlay(cfg, overlay["layout"], cards,
-                                             total, workers=hf_workers)
+            cards_layout = cap.layout_cards(chunks, hold)
+            info = hf_overlay.ensure_overlay(cfg, overlay["layout"],
+                                             cards_layout, total,
+                                             workers=hf_workers)
             hf_path = Path(info["path"]) if info.get("path") else None
             hf_notes = {k: v for k, v in info.items() if k != "path"}
 
@@ -1470,9 +1749,27 @@ def render(cfg: dict, sku_dir: Path, out_mp4: Path,
         proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=log)
         assert proc.stdin is not None
 
-        # static overlay composited with the band-optimised path
+        # Static overlay composited with the band-optimised path. Readers are
+        # keyed by cut index (never modulo): during a pre-roll transition the
+        # outgoing and incoming shots are both open.
         norm_by_name = {c.name: n for c, n in zip(clips, norm)}
         readers: dict[int, ClipReader] = {}
+
+        def reader_for(index: int, start_offset: float = 0.0) -> ClipReader:
+            reader = readers.get(index)
+            if reader is None:
+                for stale in [key for key in readers if key < index - 1]:
+                    readers.pop(stale).release()
+                cut = cuts[index]
+                # Honour the clip chosen by plan_cuts()/edit_plan.json. Using
+                # index % len(norm) silently swapped clips while keeping
+                # another clip's scored in-point.
+                reader = ClipReader(
+                    norm_by_name.get(cut["clip"], norm[index % len(norm)]), FPS)
+                reader.seek(float(cut["in"]) + start_offset)
+                readers[index] = reader
+            return reader
+
         cut_idx = 0
         frames_total = int(round(total * FPS))
         punch = cfg.get("punch", {})
@@ -1483,29 +1780,39 @@ def render(cfg: dict, sku_dir: Path, out_mp4: Path,
             for f_idx in range(frames_total):
                 t_now = f_idx / FPS
                 while cut_idx + 1 < len(cuts) and t_now >= cuts[cut_idx + 1]["t0"]:
+                    # The blend ends exactly at the cut, so the outgoing reader
+                    # is finished. The incoming reader stays open, already
+                    # seeked to the planned in-point by its pre-roll handle.
+                    old = readers.pop(cut_idx, None)
+                    if old is not None:
+                        old.release()
                     cut_idx += 1
                 cut = cuts[cut_idx]
 
-                ri = cut_idx % len(cuts)
-                reader = readers.get(ri)
-                if reader is None:
-                    for old in readers.values():
-                        old.release()
-                    readers.clear()
-                    # Honour the clip chosen by plan_cuts()/edit_plan.json.
-                    # Using cut_idx % len(norm) silently swapped clips while
-                    # keeping another clip's scored in-point.
-                    reader = ClipReader(
-                        norm_by_name.get(cut["clip"], norm[cut_idx % len(norm)]), FPS)
-                    reader.seek(cut["in"])
-                    readers[ri] = reader
-
-                frame = reader.read()
+                frame = reader_for(cut_idx).read()
                 if frame.shape[1] != W or frame.shape[0] != H:
                     frame = cv2.resize(frame, (W, H), interpolation=cv2.INTER_AREA)
 
-                # 0.16 s punch-in: 1.12x -> 1.0x, anchored on the cut
-                if punch.get("enabled", True):
+                # Pre-roll blend over [at - sec, at]. Picture only: punch,
+                # overlay, text cards, captions and grade run after this, so a
+                # baked caption is never blended into the incoming shot.
+                blend = t_by_from.get(cut_idx)
+                if blend and t_now >= blend["at"] - blend["sec"]:
+                    # Borrow the handle *before* the in-point, so the cut still
+                    # lands on the planned frame and QA clip identity holds.
+                    incoming = reader_for(blend["to_index"],
+                                          -blend["sec"]).read()
+                    if incoming.shape[1] != W or incoming.shape[0] != H:
+                        incoming = cv2.resize(incoming, (W, H),
+                                              interpolation=cv2.INTER_AREA)
+                    progress = ((t_now - (blend["at"] - blend["sec"]))
+                                / blend["sec"])
+                    frame = transitions.blend_frames(
+                        frame, incoming, progress, blend["kind"])
+
+                # 0.16 s punch-in: 1.12x -> 1.0x, anchored on the cut. A shot
+                # that starts on a transition is punch-free (see punch_free).
+                if punch.get("enabled", True) and cut_idx not in punch_free:
                     p = ease_out_cubic((t_now - cut["t0"]) / float(punch["duration_sec"]))
                     z = 1.0 + (float(punch["scale"]) - 1.0) * (1.0 - p)
                     if z > 1.001:
@@ -1525,6 +1832,10 @@ def render(cfg: dict, sku_dir: Path, out_mp4: Path,
 
                 if not hf_path:
                     compositor.apply(frame)
+                # Text cards stay native in both transports (see the class
+                # docstring); captions are the HyperFrames layer's job.
+                cards.draw(frame, t_now, zone=cut.get("text_zone"))
+                if not hf_path:
                     active = chunk_at(chunks, t_now, hold)
                     if active:
                         cap.draw(frame, active, t_now)
@@ -1605,7 +1916,8 @@ def render(cfg: dict, sku_dir: Path, out_mp4: Path,
                  str(out_mp4.parent / "contact_sheet.png")])
         mark("contact_sheet")
 
-        shutil.copy2(timings_path, out_mp4.parent / "word_timings.json")
+        if timings_path.exists():
+            shutil.copy2(timings_path, out_mp4.parent / "word_timings.json")
         (out_mp4.parent / "caption_audit.json").write_text(
             json.dumps({"sku": sku_dir.name, **caption_audit},
                        ensure_ascii=False, indent=2), encoding="utf-8")
@@ -1646,8 +1958,16 @@ def render(cfg: dict, sku_dir: Path, out_mp4: Path,
             },
             "cuts": [{k: v for k, v in c.items() if k != "clip_path"} for c in cuts],
             "audio": audio_notes,
+            "music_only": music_only,
+            "text_cards": cards.audit(),
+            "transitions": {
+                "enabled": bool(tplan),
+                "sec": t_sec,
+                "plan": tplan,
+                "skipped": t_skipped,
+            },
             "alignment": {
-                "method": timings.get("method"),
+                "method": timings.get("method") or ("none" if music_only else None),
                 "words": len(words),
                 "tempo": timings.get("tempo"),
                 "script_similarity": timings.get("script_similarity"),
@@ -1655,10 +1975,11 @@ def render(cfg: dict, sku_dir: Path, out_mp4: Path,
             "safe_zone": overlay["mode"],
             "overlay_engine": "hyperframes" if hf_path else "native",
             "hyperframes": hf_notes,
-            "price_box": [overlay["layout"]["price"]["x0"],
-                          overlay["layout"]["price"]["y0"],
-                          overlay["layout"]["price"]["x1"],
-                          overlay["layout"]["price"]["y1"]],
+            "price_box": ([overlay["layout"]["price"]["x0"],
+                           overlay["layout"]["price"]["y0"],
+                           overlay["layout"]["price"]["x1"],
+                           overlay["layout"]["price"]["y1"]]
+                          if overlay["layout"]["price"]["size"] else None),
             "warnings": warnings,
             "elapsed_sec": round(time.time() - t_start, 1),
         }
@@ -1716,9 +2037,11 @@ def remix(cfg: dict, sku_dir: Path, out_mp4: Path,
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     total = float(plan["duration_sec"])
     cuts = plan["cuts"]
+    sku = json.loads((sku_dir / "sku.json").read_text(encoding="utf-8"))
     tmp = Path(tempfile.mkdtemp(prefix="fenixsoft_remix_"))
     try:
-        mix, notes = build_audio(cfg, sku_dir, total, cuts, tmp)
+        mix, notes = build_audio(cfg, sku_dir, total, cuts, tmp,
+                                 music_only=is_music_only(sku))
         tmp_out = tmp / "remix.mp4"
         enc = cfg["encoding"]
         run(["ffmpeg", "-y", "-v", "error", "-i", str(out_mp4), "-i", str(mix),
@@ -1770,10 +2093,26 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--draft", action="store_true",
                         help="veryfast/crf23 encode and only the eight contact-"
                              "sheet stills; for review, not delivery")
+    parser.add_argument("--preview", action="store_true",
+                        help="stills preview: one frame per cut midpoint plus "
+                             "the first frame of every text card, with overlay, "
+                             "cards, captions and grade; no encode, no run")
+    tgroup = parser.add_mutually_exclusive_group()
+    tgroup.add_argument("--transition", choices=sorted(transitions.TRANSITIONS),
+                        help="force this pre-roll transition for one render "
+                             "(overrides config transitions.enabled/default)")
+    tgroup.add_argument("--no-transition", action="store_true",
+                        help="hard cuts for this render, even when "
+                             "config transitions.enabled is true")
     args = parser.parse_args(argv)
 
-    cfg = load_config(args.config)
     sku_dir = resolve_sku_dir(args.sku_dir)
+    cfg = load_config(args.config, project=sku_dir)
+
+    if args.preview:
+        from . import preview
+        preview.main_preview(cfg, sku_dir)
+        return
 
     if args.remix:
         if args.out:
@@ -1803,7 +2142,8 @@ def main(argv: list[str] | None = None) -> None:
     try:
         render(cfg, sku_dir, out, allow_soft_in=args.allow_soft_in,
                hf=args.hf_overlay, hf_workers=args.hf_workers,
-               draft=args.draft)
+               draft=args.draft,
+               transition="cut" if args.no_transition else args.transition)
     except BaseException:
         # a refused render must not leave an empty "run" behind: the directory
         # was created by this process and nothing else writes into it
