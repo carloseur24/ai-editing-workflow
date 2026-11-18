@@ -1,0 +1,95 @@
+{
+  "title": "iPhone 14 • 128GB — demo brief",
+  "project_type": "edit",
+  "goal": "Show the phone honestly and drive a WhatsApp enquiry for the single unit.",
+  "audience": "Buyers in Maracay comparing a used iPhone against a new one.",
+  "platforms": ["reels", "tiktok", "whatsapp-status"],
+  "format": {
+    "aspect": "9:16",
+    "width": 1080,
+    "height": 1920,
+    "fps": 60
+  },
+  "duration_sec": 28,
+  "tone": "Direct, warm, no hype. The product does the talking.",
+  "references": [],
+  "story": {
+    "framework": "hook_retain_reward",
+    "hook": "A clean iPhone 14 for $330 — is it real?",
+    "beats": [
+      {
+        "purpose": "hook",
+        "weight": 0.12,
+        "text": "iPhone 14 por $330",
+        "visual": "Back cameras in close-up, slow push-in",
+        "audio": "Music downbeat; one air whoosh into the cut",
+        "motion": "Title card lands on the first beat"
+      },
+      {
+        "purpose": "problem",
+        "weight": 0.16,
+        "text": "Nuevo cuesta el doble",
+        "visual": "Box and accessories laid out",
+        "audio": "Bed continues; tactile click on the box",
+        "motion": "Price pill enters with a short rise"
+      },
+      {
+        "purpose": "mechanism",
+        "weight": 0.34,
+        "text": "128 GB, eSIM, 77% batería",
+        "visual": "Screen, Face ID and settings walk-through",
+        "audio": "UI ticks under the voice",
+        "motion": "One caption card per proof point"
+      },
+      {
+        "purpose": "payoff",
+        "weight": 0.24,
+        "text": "Cien por ciento funcional",
+        "visual": "Edges and ports, then a clean hero frame",
+        "audio": "Music opens; sub hit on the hero frame",
+        "motion": "Badge settles, no shake"
+      },
+      {
+        "purpose": "cta",
+        "weight": 0.14,
+        "text": "Una sola unidad",
+        "visual": "Product hero with footer and price",
+        "audio": "Riser ends on the final frame; tail pad",
+        "motion": "Footer and price hold still"
+      }
+    ],
+    "cta": "Escríbenos por WhatsApp antes de que se vaya.",
+    "decisions": [
+      "Hook-Retain-Reward over AIDA: one unit, one clear proof arc",
+      "Record the voiceover first; cut to measured word timings, not guesses"
+    ]
+  },
+  "assets": {
+    "footage_dir": "input/example_iphone14/clips",
+    "clips": [
+      "01_back_cameras.mp4",
+      "02_screen_faceid.mp4",
+      "03_edges_ports.mp4",
+      "04_box.mp4",
+      "05_accessories.mp4"
+    ],
+    "images": [],
+    "voiceover": "voice.mp3",
+    "music": "assets/music/groove_120bpm.wav",
+    "sfx": ["assets/sfx/whoosh_short.wav"]
+  },
+  "motion": {
+    "style": "Editorial product, natural light, restrained type",
+    "elements": ["price pill", "badge", "kinetic captions"],
+    "transitions": ["hard cuts on the beat", "one push-in"]
+  },
+  "typography": {
+    "family": "Inter",
+    "treatments": ["white title", "mint subtitle", "emerald price pill"]
+  },
+  "deliverables": ["mp4", "contact_sheet"],
+  "constraints": [
+    "WhatsApp delivery under 15.5 MB",
+    "1080x1920 at 60 fps"
+  ]
+}
