@@ -15,7 +15,8 @@ from pathlib import Path
 from ..context import (ASSETS_DIR, CACHE_DIR, DEFAULT_CONFIG, EVAL_DIR,
                        FONTS_DIR, INPUT_DIR, LOCAL_CONFIG, MODELS_DIR,
                        MUSIC_DIR, OUTPUT_DIR, REPO_ROOT, SFX_DIR,
-                       display_path, known_skus, load_config, repo_path)
+                       count_overrides, display_path, known_skus, load_config,
+                       project_config_path, project_overrides, repo_path)
 
 
 def _version(cmd: list[str]) -> str | None:
@@ -121,6 +122,10 @@ def main(argv: list[str] | None = None) -> None:
             "voice": has_voice,
             "script": has_script,
             "latest_run": _latest_run(name),
+            "project_config": (display_path(project_config_path(sku_dir))
+                               if project_config_path(sku_dir).exists()
+                               else None),
+            "overrides": count_overrides(project_overrides(sku_dir)),
         })
 
     data = {
@@ -147,6 +152,8 @@ def main(argv: list[str] | None = None) -> None:
         "eval_dir": str(EVAL_DIR),
         "cache_dir": str(CACHE_DIR),
         "assets_dir": str(ASSETS_DIR),
+        "project_configs": [row["project_config"] for row in rows
+                            if row["project_config"]],
         "skus": rows,
         "failures": failures,
         "warnings": warnings,
@@ -183,7 +190,9 @@ def main(argv: list[str] | None = None) -> None:
             flags.append("voice" if row["voice"] else "NO VOICE")
             flags.append("script" if row["script"] else "NO SCRIPT")
             latest = row["latest_run"] or "no runs"
-            print(f"  {row['sku']:<26} {', '.join(flags):<30} {latest}")
+            config = (f" + {row['overrides']} config override(s)"
+                      if row["project_config"] else "")
+            print(f"  {row['sku']:<26} {', '.join(flags):<30} {latest}{config}")
         print(f"output      {data['output_size']} in {OUTPUT_DIR}")
         print(f"eval        {EVAL_DIR}")
         print(f"cache       {CACHE_DIR}")
