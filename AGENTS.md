@@ -36,6 +36,16 @@ deliver**. Facts come from tools; taste comes from the conversation.
    ffprobe matches, and the result was watched — they have no 30-check QA gate.
 8. **No commits or external writes unless the user asked in this turn.**
 
+## Production line
+
+Four layers, one direction: `src/` + `config/pipeline.json` are machinery;
+`input/<p>/` is project intent (including an optional sparse
+`input/<p>/config.json` overlay); `output/<p>/` is generated media; the delivery
+shelf is the product. Config precedence is global < `config/pipeline.local.json`
+< project overlay, and an explicit `--config` replaces the base without
+defeating the project. Full rules:
+[docs/agent/production-line.md](docs/agent/production-line.md).
+
 ## Skills first — the creative layer
 
 The pipeline executes; the skills carry the craft. **Open every video task with
