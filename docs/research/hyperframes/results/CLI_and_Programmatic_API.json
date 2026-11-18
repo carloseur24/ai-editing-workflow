@@ -1,0 +1,195 @@
+{
+  "basic": {
+    "title": "CLI and Programmatic API",
+    "domain": "Developer interface: command-line surface + Node.js packages",
+    "one_liner": "HyperFrames exposes every operation as a non-interactive CLI command with a JSON envelope, exit codes 0/1/2, and Node packages (@hyperframes/core, /producer, /player) for embedding parsing, rendering and playback.",
+    "official_sources": [
+      "https://hyperframes.heygen.com/packages/cli",
+      "https://hyperframes.heygen.com/developers/cli",
+      "https://hyperframes.heygen.com/packages/core",
+      "https://hyperframes.heygen.com/packages/producer",
+      "https://hyperframes.heygen.com/packages/player",
+      "https://hyperframes.heygen.com/packages/engine",
+      "https://github.com/heygen-com/hyperframes",
+      "https://www.npmjs.com/package/hyperframes"
+    ],
+    "maturity": "beta",
+    "last_verified": "2026-11-15"
+  },
+  "capabilities": {
+    "what_it_enables": "A script or agent can scaffold a project, lint and browser-check it, capture stills for visual review, edit the timeline by verb, render MP4/WebM/MOV/GIF/PNG/HLS, upload for review, and render in the cloud - all headlessly and without prompts; a Node service can do the same in-process through createRenderJob/executeRenderJob or the Producer HTTP server.",
+    "key_features": [
+      "Single binary entry `hyperframes` (bin/hyperframes.mjs, citty-based) with ~60 subcommands; `npx hyperframes <cmd>` works with no install, `npm i -g hyperframes` installs it.",
+      "Non-interactive by default: a missing required flag fails immediately with a usage example; only `init`, `catalog --human-friendly` and a first `share` prompt on a TTY.",
+      "Unattended detection: no TTY, CI, inside a coding agent, or `HYPERFRAMES_AGENT=1` makes any consent prompt exit 2 and name the flag to pass (`--yes`).",
+      "`--json` on most commands returns a machine-readable payload wrapped with a `_meta` object: `{version, latestVersion, updateAvailable, checkedAt, skillsOutdated, skillsMissing, updateNotice}` so a script can detect an outdated CLI without a second call.",
+      "Failures under `--json` print exactly one object: `{\"ok\": false, \"error\": {\"code\", \"message\", \"hint\"}}`; `lint` adds `findings`, timeline refusals add `reason` and `fix`.",
+      "Exit codes are a fixed three-value contract: 0 success, 1 ran-and-failed, 2 the command line itself is wrong (unknown command/flag, missing or invalid value).",
+      "Render progress is machine-readable on non-TTY stdout: one line per update `@hf-progress {\"code\":\"capture\",\"done\":N,\"total\":M,\"pct\":42}` with codes compile|extract_video|process_audio|start_browsers|capture|encode|assemble.",
+      "Project directory is the first positional argument for most commands (default: cwd); `add`, `transcribe`, `feedback`, `skills`, `history` and timeline edit verbs take `--dir` instead.",
+      "`render --batch` renders one file per row of a JSON array (or `{rows:[...]}`) and prints one final JSON result document; `--batch-concurrency` and `--batch-fail-fast` control fan-out.",
+      "`timeline` is a read/write timeline API from the shell: move, trim, split, delete, set volume/rate/track, duplicate, apply (all-or-nothing JSON edit list), undo by receipt, ids.",
+      "Every timeline edit supports `--plan` (print result + diff, write nothing) and refuses an invalid edit with exit 2 before touching a file.",
+      "`snapshot` is the 'still frame' command: `--at 2.9,10.4`, `--frames N`, `--range`, `--zoom '#headline'` (raised DPR crop), `--angle` orthographic 3D, `--against ref.mp4` pair comparison, `--review` contact sheets for beats and seams.",
+      "`check` is one browser session that runs lint + runtime + layout + motion + WCAG AA contrast + craft + audio + HDR audits and returns sections in JSON, with `--strict` promoting warnings to failures.",
+      "`keyframes` reports the GSAP/CSS/Anime.js keyframes actually detected and can write an onion-skin PNG of one element's motion (`--selector`, `--shot`, `--samples`, `--layout path|strip`, `--angle`).",
+      "Node render API: `createRenderJob(config)` builds a job, `executeRenderJob(job, projectDir, outputPath, onProgress?, abortSignal?, assertActive?)` runs it, `RenderCancelledError` on abort, `RenderQualityError` in strict mode.",
+      "Producer also ships an HTTP service: `startServer({port})` with POST /render (blocking), POST /render/stream (SSE), GET /render/queue, POST /lint, GET /health, GET /outputs/:token.",
+      "@hyperframes/core exposes parse/generate/compile surfaces (`parseHtml`, `extractCompositionMetadata`, `generateHyperframesHtml`, `compileHtml`, `bundleToSingleHtml`, `validateHyperframeHtmlContract`, `validateVariables`, `getVariables`, `createGSAPFrameAdapter`).",
+      "@hyperframes/player is a `<hyperframes-player>` custom element with a media-like JS API (play/pause/seek/currentTime/playbackRate/muted/volume/duration/paused/ready) and 13 documented events, rendering the composition in a sandboxed shadow-DOM iframe.",
+      "`hyperframes/api` (a Node subpath export of the CLI) exposes `transcribe()` and `removeBackground()` as library calls with typed errors and progress callbacks - no argv, no printing, no exit.",
+      "Auth is a first-class command family: `auth login` (OAuth via browser, or `--device` for SSH, or `--api-key` verified against GET /v3/users/me), `auth status --json`, `auth refresh`, `auth logout`.",
+      "Remote rendering has three drivers with the same credential: `cloud render` (HeyGen-hosted), `lambda render`/`render-batch` (your AWS), `cloudrun` (your GCP)."
+    ],
+    "technical_mechanism": "The CLI is a thin citty command layer over the packages. `render` builds a RenderRequest, calls `createRenderJob` + `executeRenderJob` from @hyperframes/producer, which compiles the HTML (inlining assets, localizing remote media and fonts), serves the project over a loopback HTTP server, drives headless Chrome through CDP - seeking each frame with `window.__hf`/`__timelines` and capturing via BeginFrame (Linux) or screenshots - extracts source video frames with FFmpeg, mixes audio with FFmpeg + an OfflineAudioContext FX pass, and encodes with FFmpeg. The CLI adds progress rendering (TTY bar vs `@hf-progress` machine lines), the `_meta` update envelope, exit-code mapping, and a per-user render lock file so two local renders never starve each other. Lint/check/snapshot/keyframes reuse @hyperframes/lint and the same capture session without the encoder.",
+    "text_and_motion_capabilities": "The API surface itself does not draw type, but it is the inspection and control plane for typography and motion: `snapshot --zoom '#selector' --zoom-scale 3` gives glyph-level pixel crops to judge letterfit, weight and stroke; `check` returns a WCAG AA contrast section per sampled frame; `keyframes --shot` writes an onion skin of an element's real positions so easing and overlap are visible; `--at`/`--range` seek to exact film seconds (frame-quantised by the engine) for per-beat review; `timeline set '#captions' rate=0.8` and `move/trim/split` retime caption clips without touching HTML; `render --variables` swaps copy per SKU while the animation contract stays byte-identical. Frame accuracy is the engine's (seek to `quantizeTimeToFrame(t)`), so CLI-driven reviews are reproducible.",
+    "output_formats": [
+      "stdout text (human), `--json` envelopes with `_meta`, and non-TTY `@hf-progress` NDJSON-ish lines.",
+      "`render --format mp4` (H.264 + AAC 192k, faststart) - the default delivery file.",
+      "`render --format webm` (VP9 + yuva420p alpha + Opus 128k), `--format mov` (ProRes 4444 + alpha + AAC), `--format gif` (no audio, <=30 fps), `--format png-sequence` (RGBA frames + audio.m4a sidecar), `--format hls` (master.m3u8 + .ts segments).",
+      "`snapshot` writes 1920x1080 PNGs (or cropped/zoomed crops) into `<project>/.hyperframes/artifacts/snapshots/<id>/`, plus contact sheets; `keyframes --shot` writes an onion-skin PNG.",
+      "`compare`/`grade-compare` write a labelled PNG grid; `cloud get` returns presigned `video_url` and `thumbnail_url`.",
+      "`--json` documents for lint (errorCount/warningCount/infoCount/findings/unmountedCompositions), check (ok/browserSkipped/scope/lint/runtime/layout/motion/contrast/craft/audio/hdr/snapshots), snapshot (frames[] with path+time+role), add (installed[]/errors[]), catalog rows (name/type/title/description/tags/dimensions/duration/preview)."
+    ]
+  },
+  "api": {
+    "setup_and_install": "Requirements: Node.js >= 22 (package `engines`), FFmpeg + ffprobe on PATH, and a Chromium build (the CLI resolves a bundled headless-shell, or uses `HYPERFRAMES_BROWSER_PATH`).\n\n```bash\n# no install\nnpx hyperframes render\n\n# global install\nnpm install -g hyperframes\n# or per project\nnpm install -D hyperframes\n\n# libraries\nnpm install @hyperframes/core @hyperframes/producer @hyperframes/player\n\n# verify the machine\nnpx hyperframes doctor --json\n```\n\nVersion verified during research: hyperframes 0.9.54 (npm dist-tag `latest`), all four packages versioned in lockstep.",
+    "minimal_code_example": "```bash\n# CLI: scaffold a 1080x1920 project, gate it, render it\nnpx hyperframes init sku-reel --resolution portrait --non-interactive\ncd sku-reel\nnpx hyperframes lint . --json\nnpx hyperframes render . --fps 60 --quality looks --output renders/reel.mp4\n```\n\n```js\n// Node service: same render, in-process, with progress and cancellation\nimport { createRenderJob, executeRenderJob, RenderCancelledError } from \"@hyperframes/producer\";\n\nconst job = createRenderJob({\n  fps: { num: 60, den: 1 },      // exact rational, not 59.94 rounding\n  quality: \"high\",               // draft | standard | high\n  format: \"mp4\",\n  entryFile: \"index.html\",\n  variables: { price: \"$330\", battery: \"77%\" },\n  strictVariables: true,\n});\n\nconst controller = new AbortController();\n\ntry {\n  await executeRenderJob(\n    job,\n    \"./sku-reel\",\n    \"./out/reel.mp4\",\n    (j, message) => console.log(j.status, Math.round(j.progress), message),\n    controller.signal,\n  );\n  console.log(job.outcome, job.duration, job.totalFrames, job.outputPath);\n} catch (err) {\n  if (err instanceof RenderCancelledError) console.error(\"cancelled:\", err.reason);\n  else throw err;\n}\n```\n\n```js\n// Player: embed the same composition in a review page\nimport \"@hyperframes/player\";\nconst p = document.querySelector(\"hyperframes-player\");\np.addEventListener(\"ready\", (e) => console.log(\"duration\", e.detail.duration));\np.seek(2.5);\n```",
+    "cli_or_api_surface": [
+      "init [dir] --example/-e, --resolution, --video/-v, --audio/-a, --tailwind, --non-interactive, --skip-transcribe, --keep-original, --model, --language, --skip-skills",
+      "add <name|tag> --dir, --json, --no-clipboard (installs a block or component, resolves registryDependencies transitively, checks minCliVersion, keeps successful installs and exits 1 if any block in a tag failed)",
+      "catalog --type block|component, --tag, --query, --on-device, --json, --human-friendly, --yes",
+      "capture <url> -o/--output, --timeout, --capture-budget, --skip-assets, --skip-vision, --max-screenshots, --local-file, --local-root, --video <folder> --list/--index/--video-url, --json",
+      "transcribe <media|transcript> --dir/-d, --engine auto|parakeet|whisper|heygen, --model, --language, --to srt|vtt, --output, --preserve-cues, --optional, --timeout, --json",
+      "models list|install parakeet [--json]",
+      "tts \"text\"|file --output/-o, --voice/-v, --speed, --lang, --list, --json",
+      "remove-background <media> -o, --background-output/-b, --device auto|cpu|coreml|cuda, --quality fast|balanced|best, --info, --json",
+      "media-treatment --capabilities, --capability <id>, --all, --project, --file, --selector, --selector-index, --grading <json>, --apply, --analyze, --clear, --dry-run, --json",
+      "media-use resolve|candidates|adopt|analyze|voices|avatars|doctor|stats --type, --intent, --entity, --project/-p, --candidates, --reuse <sha>, --from <file>, --params, --for, --analyze, --local-only, --provider, --voice-id, --avatar-id, --days, --json",
+      "beats [dir|file] --json  ->  {ok, file, count, bpm, beatTimes?}",
+      "audio <files...> | --element <sel> | --at <s> | --range a,b  --only onsets,beats,downbeats,bpm,sections,describe  --silence-db, --place-at, --skip-file-seconds, --read, --layer music|sfx|voice, --quality, --transcript, --json",
+      "normalize-audio --reference <id> --target <id> [--write] [--tolerance 0.5] [--json]  (EBU R128 integrated match, respects data-volume, caps at +12 dB / -1.5 dBTP)",
+      "preview [dir] --port (3002), --open/--no-open, --background, --foreground, --status, --stop, --list, --kill-all, --force-new, --proxy/--no-proxy, --browser-gpu/--no-browser-gpu, --browser-path, --selection, --context [--context-fields, --context-detail], --json",
+      "present | play  (presentation mode over a running preview)",
+      "publish / open / catch-up  (legacy publication + project resume)",
+      "lint [dir] --json, --verbose, --include-unmounted, --lint-verbose",
+      "check [dir] --json, --snapshots, --at, --strict, --proxy, --browser-gpu, --include-unmounted",
+      "snapshot [dir] --at, --frames, --range, --composition, --output/-o, --end/--no-end, --keep, --zoom, --against, --zoom-scale, --angle, --review, --describe, --timeout, --json",
+      "keyframes [dir] --selector, --runtime gsap|css|anime|all, --shot <png>, --samples, --layout, --from, --to, --angle, --fit/--no-fit, --ghost, --json",
+      "compare <dirs...> --at, --labels, --out, --cols, --timeout, --json  |  grade-compare --for, --grades, --luts, --project, --out, --baseline/--no-baseline, --json",
+      "validate | inspect | layout  (deprecated; still run, print a deprecation line, set _meta.deprecated: true; superseded by `check`)",
+      "reverse | measure | diff  (rebuild-an-existing-video tooling)",
+      "timeline [dir] --json  |  timeline move|trim|split|delete|set|duplicate|apply|undo|ids ... --plan, --overwrite, --snap, --at, --dir, --json",
+      "history [dir] --since, --who, --limit, --json; history show|undo|restore|peek|pin|begin|end",
+      "render [dir] --output/-o, --composition/-c, --format, --fps/-f, --quality/-q, --resolution, --crf, --video-bitrate, --keyframe-interval, --start, --end, --max-bitrate, --buffer-size, --vp9-cpu-used, --chroma-subsampling, --gif-loop, --hls-segment-seconds, --video-frame-format, --hdr, --sdr, --page-motion-blur, --workers/-w, --low-memory-mode, --gpu, --browser-gpu, --page-side-compositing, --experimental-fast-capture, --frames-cache-dir, --max-concurrent-renders, --best-effort/--no-best-effort, --wait/--no-wait, --strict/--strict-all, --strict-variables, --variables, --variables-file, --batch, --batch-concurrency, --batch-fail-fast, --resume, --keep-segments, --docker, --debug, --quiet, --skill, --json",
+      "benchmark [dir] --runs 1-20 [--json]",
+      "doctor [--json] | clean | info [--media] | compositions | update | upgrade | browser | docs | feedback | telemetry | skills [check|update] | usage | billing | templates | figma | events",
+      "auth login [--device|--api-key] | auth status [--json] | auth refresh | auth logout [--keep-api-key] [--yes]",
+      "share --public|--team|--invite-only|--private, --include-source, --video-only, --update, --status, --manage, --space, --wait-seconds, --yes, --json",
+      "cloud render [dir] --fps, --quality, --format mp4|webm|mov, --resolution 1080p|4k, --aspect-ratio, --composition/-c, --variables, --variables-file, --strict-variables, --title, --output/-o, --dry-run, --no-wait, --callback-url, --callback-id, --asset-id, --url, --poll-interval, --max-wait, --idempotency-key, --json",
+      "cloud list --limit, --token, --all; cloud get <render_id>; cloud delete <render_id> --no-confirm",
+      "lambda deploy|sites create|render|render-batch|progress|destroy|policies; cloudrun deploy|render",
+      "@hyperframes/core: parseHtml, extractCompositionMetadata, generateHyperframesHtml, generateHyperframesStyles, serializeGsapAnimations, getVariables, validateVariables, formatVariableValidationIssue, createGSAPFrameAdapter, compileHtml, bundleToSingleHtml, compileTimingAttrs, injectDurations, extractResolvedMedia, validateHyperframeHtmlContract",
+      "@hyperframes/producer: createRenderJob, executeRenderJob, renderSpan (partial-range), startServer, createProducerApp, createRenderHandlers, resolveConfig, DEFAULT_CONFIG, createConsoleLogger, RenderCancelledError, RenderQualityError, plan/renderChunk/assemble (distributed), localizeRemoteMediaSources, localizeRemoteImageSources, localizeRemoteFontFaces, prepareAnimatedGifInputs, prepareHeifImageInputs",
+      "@hyperframes/player: <hyperframes-player> attributes (src, type, srcdoc, width, height, controls, autoplay, loop, muted, volume, poster, playback-rate, audio-src, audio-locked, assets-loading-ui, low-power-idle, disable-click-to-play, no-load-timeout, range-start, range-end); methods play/pause/seek/setRuntimeData/setColorGrading/stopMedia/scenes; events ready, durationchange, resize, timeupdate, play, pause, ended, rangeclamped, ratechange, volumechange, scenes, error, playbackerror",
+      "hyperframes/api (Node): transcribe(options), removeBackground(options), offloadHeavyMedia(...) - documented as 'for HyperFrames' own apps; may change between minor versions'"
+    ],
+    "key_config_options": [
+      "`--quality looks` (default) = encoder preset `standard` + explicit CRF 16; `draft` = ultrafast/CRF 28; `standard` = medium/CRF 18; `high` (`delivery`) = fast/CRF 15. Source: QUALITY_ALIASES in the CLI bundle and ENCODER_PRESETS in @hyperframes/engine.",
+      "`--fps` accepts 1-240 or an ffmpeg rational (`30000/1001`); default is the root `data-fps`, else 30. GIF output is forced to <=30 fps.",
+      "`--format` mp4|webm|mov|gif|png-sequence|hls. Transparency: webm (VP9 alpha) and mov (ProRes 4444). `--prores-profile hq|422|lt|proxy` drops alpha.",
+      "`--workers` 1-24, each ~256 MB Chrome; auto weighs cores, RAM, frame count and cost. `--low-memory-mode` auto-enables at <=8 GB host RAM (reads host RAM, not cgroup - set PRODUCER_LOW_MEMORY_MODE in containers).",
+      "`--strict` fails on lint errors; `--strict-all` fails on errors and warnings; `--strict-variables` fails on undeclared/mistyped variable keys.",
+      "`--resume` reuses finished capture segments after re-validating them and is documented as byte-identical to an uninterrupted render; segments live in `renders/.hf-segments/<planHash>/`.",
+      "`--variables '{\"title\":\"Q4\"}'` or `--variables-file vars.json` merges over `<html data-composition-variables='[...]'>` defaults; read in the page with `window.__hyperframes.getVariables()`. Types: string, number, color, boolean, enum, font, image.",
+      "`--batch` takes a JSON array or `{\"rows\":[...]}` and renders one file per row; `--batch-concurrency` default 1; `--batch-fail-fast` default off; with `--json` prints exactly one final document.",
+      "Timeouts (three separate budgets, all with ms env fallbacks): `--browser-timeout` seconds (default 60) / PRODUCER_PAGE_NAVIGATION_TIMEOUT_MS; `--player-ready-timeout` ms (default 45000) / PRODUCER_PLAYER_READY_TIMEOUT_MS; `--protocol-timeout` ms (default 300000, auto-scales with pixel area) / PRODUCER_PUPPETEER_PROTOCOL_TIMEOUT_MS.",
+      "Env: HYPERFRAMES_NO_UPDATE_CHECK=1 (no version check/install/notice), HYPERFRAMES_NO_AUTO_INSTALL=1, HYPERFRAMES_SKIP_SKILLS=1, HYPERFRAMES_AGENT=1, HYPERFRAMES_CACHE_DIR, HYPERFRAMES_RENDER_LOCK=off, HYPERFRAMES_CHROME_SANDBOX=0|1, HYPERFRAMES_CHROME_ENV_PASSTHROUGH, PRODUCER_ENABLE_STREAMING_ENCODE, HF_SEGMENTED_CAPTURE, HF_SEGMENT_FRAMES.",
+      "Producer server: port default 9847, host 127.0.0.1 unless PRODUCER_HOST; any non-loopback bind requires authToken/PRODUCER_AUTH_TOKEN (Bearer on every route but /health); request `projectDir` must resolve inside PRODUCER_PROJECTS_DIR, `outputPath` inside PRODUCER_RENDERS_DIR (default /tmp); PRODUCER_RESTRICT_PAGE_NETWORK=true fences the render browser to its own project server + public IPv4.",
+      "RenderJob fields that map 1:1 to CLI flags: fps (Fps rational), quality, format, entryFile, crf, videoBitrate (mutually exclusive), keyframeIntervalSeconds, maxBitrate, bufferSize, chromaSubsampling '420'|'444', proresProfile, hlsSegmentSeconds, gifLoop, motionBlur, pageMotionBlur 'off', workers, maxRenderMs, useGpu, debug, strictness 'strict'|'best-effort', hdrMode auto|force-hdr|force-sdr, outputResolution, variables, strictVariables, resumeSegments, keepSegments, logger, producerConfig.",
+      "`_meta` in every --json payload: version, latestVersion, updateAvailable, checkedAt, skillsOutdated, skillsMissing, updateNotice; absent under CI, HYPERFRAMES_NO_UPDATE_CHECK=1 or an agent plugin; `--json` never makes its own network request."
+    ]
+  },
+  "integration": {
+    "pipeline_fit": "Augments, and in the overlay role replaces, the current Python+FFmpeg renderer - not the whole stack. Today render_video.py owns beat-synced cuts, pill/caption layout and the audio bed. The cheapest adoption is to keep that pipeline and use only the CLI as (a) a `snapshot`/`check`/`keyframes` visual gate and (b) a renderer for transparent text/motion overlays (webm/mov) that FFmpeg composites over the existing footage. A full adoption would move every caption, pill and transition into a HyperFrames composition and call `render` once per SKU, leaving Python as the JSON/asset producer.",
+    "python_integration": "Primary path is subprocess, not a Node bridge - no native bindings, no IPC protocol to maintain:\n\n```python\nimport json, re, subprocess\n\nPROGRESS = re.compile(r'^@hf-progress (\\{.*\\})$')\n\ndef render(project: str, out: str, timeout: int = 900) -> dict:\n    proc = subprocess.run(\n        [\"npx\", \"hyperframes\", \"render\", project,\n         \"--fps\", \"60\", \"--quality\", \"looks\", \"--output\", out, \"--quiet\"],\n        capture_output=True, text=True, timeout=timeout, cwd=project,\n        env={**os.environ, \"HYPERFRAMES_NO_UPDATE_CHECK\": \"1\"},\n    )\n    if proc.returncode == 2:\n        raise ValueError(f\"CLI usage error: {proc.stderr.strip()}\")\n    if proc.returncode == 1:\n        raise RuntimeError(f\"render failed: {proc.stderr.strip()[:2000]}\")\n    return {\"out\": out, \"log\": proc.stderr}\n```\n\nCaveats: (1) progress lines go to **stdout** and are only emitted when stdout is not a TTY - keep `capture_output=True` or pipe stdout, and keep `--quiet` off if you want `@hf-progress`; (2) human progress goes to stderr, so parse stderr for the first exact error rather than the final 'render failed'; (3) `--json` is not accepted by every command and a command that does not support it exits 2; (4) `npx` adds ~1 s and may fetch, so install the CLI once in the image (`npm i -g hyperframes@0.9.54`) and call the `hyperframes` binary; (5) one local render per user account is serialised by a lock file - run parallel SKUs with separate `HYPERFRAMES_CACHE_DIR` values or use `--batch`. For in-process rendering without a subprocess, run a tiny Node sidecar that imports @hyperframes/producer and exposes POST /render (or `startServer`) - the Producer HTTP API already returns JSON and supports SSE progress.",
+    "data_injection": "Two mechanisms, both declarative so the composition HTML never needs rewriting per SKU:\n\n1. Composition variables: declare on the root `<html data-composition-variables='[{\"id\":\"price\",\"type\":\"string\",\"label\":\"Price\",\"default\":\"$330\"}]'>`, bind with `data-var-text` / `data-var-src` / CSS `var(--price)`, then pass `--variables '{\"price\":\"$330 USDT\"}'` or `--variables-file sku.json` per render. `--strict-variables` turns an undeclared or mistyped key into a failure instead of a warning.\n2. Word timings and captions: write `transcript.json` (`[{text,start,end}]`) with `npx hyperframes transcribe`, or generate the caption clips yourself from your existing Whisper alignment: one element per word with `data-start` (absolute film seconds) and `data-duration`.\n\nFor many SKUs at once, `--batch rows.json` renders one output per JSON row from a single composition, which is the closest analogue to the current `batch_run.py`. Note that render length comes from the root `data-duration`, which the compiler reads before composition scripts run - a variable cannot change duration for that render, so build one HTML per duration or per cut pattern.",
+    "footage_and_asset_handling": "Existing MP4s are consumed as `<video src=\"assets/01_back_cameras.mp4\" muted playsinline data-start=\"0\" data-duration=\"1.525\" data-media-start=\"3.20\">` - `data-media-start` is the trim in-point, so the current `edit_plan.json` cut list maps one-to-one onto video elements without re-encoding. The original files stay the render source: FFmpeg pre-decodes frames, so HEVC and ProRes inputs render fine even though Chrome cannot play them (preview uses a cached H.264 proxy). Fonts must be project-local `@font-face` files (`.woff2`) or a bundled/Google family; system fonts alias under distributed rendering. Alpha footage (VP9/VP8 WebM with sidecar alpha, ProRes 4444) is extracted as PNG and composited with its alpha intact.",
+    "migration_effort": "medium",
+    "integration_steps": [
+      "Pin the CLI in the render image: `npm i -g hyperframes@0.9.54`, install FFmpeg/ffprobe, run `hyperframes doctor --json` in the Docker build and fail the build on a non-zero result.",
+      "Start read-only: run `hyperframes lint` and `hyperframes check --json` against a generated 1080x1920 composition from one existing SKU and compare its findings with your own qa_check.py gates. This costs seconds and validates the contract (data-start on every clip, muted vs data-has-audio, unique ids).",
+      "Generate composition HTML from the existing sku.json with a Jinja/JSON template that emits `<video>` elements per cut (`data-media-start` = in-point) and caption elements per word, and inject all copy through `data-composition-variables` rather than string interpolation.",
+      "Replace the vision-review loop with `hyperframes snapshot --at <t1,t2,t3> --json` into `.hyperframes/artifacts/snapshots/`, and use `keyframes --selector '#captions' --shot` when a kinetic caption looks wrong; keep contact_sheet.png for the final human check.",
+      "Render the overlay path first: one transparent `--format webm` (or `--format mov` for ProRes 4444) per SKU and composite it over the existing FFmpeg cut in a single `overlay` filter; this proves sync and alpha without touching the cut logic.",
+      "Only then move the full frame into HyperFrames: `render --fps 60 --quality looks --output renders/<sku>.mp4`, then re-run the existing LUFS/true-peak gate with qa_check.py on the output file (HyperFrames guarantees <= -1 dBTP but not your -14 LUFS target).",
+      "Wire the Python driver to the CLI contract: exit 0 = ok, exit 2 = usage bug (raise loudly, never retry), exit 1 = render failure (read the first stderr error, then `--debug` for render.log).",
+      "For SKU fan-out, separate `HYPERFRAMES_CACHE_DIR` per concurrent worker or switch to `--batch` with `--batch-concurrency`; never run two renders against one cache dir expecting parallelism."
+    ]
+  },
+  "constraints": {
+    "requirements": [
+      "Node.js >= 22 (declared in package.json engines); Node 20 is not supported.",
+      "FFmpeg and ffprobe on PATH - used for video frame extraction, audio mixing, encoding, probing and (optionally) proxy generation. `doctor` fails when they are missing.",
+      "A Chromium/Chrome build: bundled headless-shell, system Chrome, or HYPERFRAMES_BROWSER_PATH. Sandbox is kept on macOS/Windows and for non-root Linux outside containers; dropped as root/in Docker/in Kubernetes/Lambda.",
+      "Enough disk for raw frames when the disk path is used: ~25 GB per minute at 1080p30 (frames x w x h x 4). Streaming encode avoids it for single-worker mp4/mov.",
+      "Host RAM is read for low-memory auto-detection - containers must set PRODUCER_LOW_MEMORY_MODE explicitly.",
+      "Network access for the version check (unless disabled), for `add`/`catalog` registry fetches, for remote media localization, and for any cloud command."
+    ],
+    "limitations": [
+      "Three exit codes only (0/1/2); there is no distinct code for 'render failed on frame 731' vs 'no disk' - the discriminator is the error text and, under --json, `error.code`.",
+      "`--json` is not universal: unsupported commands reject it with exit 2, so a wrapper must know per-command whether JSON is available.",
+      "`@hf-progress` only appears when stdout is NOT a TTY, and stage objects carry `code|done|total|pct` but no ETA; there is no documented completion event besides process exit.",
+      "Progress and warnings go to stderr while machine-progress lines go to stdout - a naive `subprocess.run(capture_output=True)` reader must parse both streams or it loses the human error.",
+      "One local render per user account: a second render waits for the first (lock file in the cache dir). Multi-SKU fan-out needs HYPERFRAMES_RENDER_LOCK=off (accepting CPU starvation) or separate cache dirs.",
+      "The CLI installs and can auto-update itself (owned npm/bun/pnpm installs), which is non-deterministic in CI; pin the version and set HYPERFRAMES_NO_UPDATE_CHECK=1 / HYPERFRAMES_NO_AUTO_INSTALL=1.",
+      "`init` is the only scaffolder and it installs AI skills by default; `--skip-skills` or HYPERFRAMES_SKIP_SKILLS=1 is required in hermetic builds.",
+      "There is no `dev` command (it is `preview`) and no `still` command (it is `snapshot`); `validate`, `inspect` and `layout` are deprecated aliases that only set `_meta.deprecated: true`.",
+      "Timeline edit verbs refuse rather than guess: an overlapping move exits 2 unless `--overwrite`, and `--snap` requires `data-fps` on the project.",
+      "The Node API is pre-1.0 and explicitly unstable: `hyperframes/api` is documented as 'for HyperFrames' own apps; it may change between minor versions', and RenderConfig is a large flat object with mutually exclusive fields (crf vs videoBitrate; chromaSubsampling 444 rejected with useGpu/hdr/other formats).",
+      "`executeRenderJob` resolves to `void` and reports through mutation of the job plus the callback - there is no returned result object, so a wrapper must read `job.outcome`, `job.error` and `job.perfSummary` after the await.",
+      "Producer HTTP server binds 127.0.0.1 by default and refuses non-loopback binds without a bearer token; `debug: true` is refused unless explicitly allowed.",
+      "Cloud rendering uploads the project as a zip capped at 200 MB (direct-upload limit); media over the cap is offloaded to public, unsigned HeyGen asset URLs - i.e. shareable by anyone with the link."
+    ],
+    "known_issues": [
+      "`add` with a tag installs what it can and exits 1 when any block in the tag fails; `--json` then reports `ok: false` with per-block `errors[]` and the successful `installed[]` - a naive wrapper treats a partial install as total failure.",
+      "Deprecated `validate`/`inspect`/`layout` still run but print a deprecation line on stderr; automation that greps stderr for errors can trip on it.",
+      "`check` returns `browserSkipped: true` with empty `layout`/`motion`/`contrast` sections when the browser never ran - empty sections are not 'clean', and a wrapper that only looks for findings will pass a project that was never inspected.",
+      "A master audio chain that does not parse fails the whole mix with `audio_processing_failed` under every strictness setting, while preview plays dry - `check` cannot catch it statically beyond `audio_attribute_unreadable`.",
+      "`render --start/--end` (partial range) is SDR-only and limited to 24/25/30/60 fps MP4; it is not a general 'render this segment' switch.",
+      "On macOS/Windows multi-worker capture is screenshot-based and writes frames to disk unless HF_CAPTURE_PARALLEL_STREAM=true, so the documented streaming savings do not apply there.",
+      "WSL2 renders may not reach the GPU (documented in help.md: 'the render is slow under WSL2'), which matters for this machine."
+    ],
+    "performance_and_cost": "Documented, not measured here: 4K is roughly 4x slower per frame with a 3-5x larger file; `--chroma-subsampling 444` took about 2x as long for a text/UI composition and about 3.5x for full-frame footage; page-side WebGL compositing is about 6x faster for SDR shader transitions; `--experimental-fast-capture` (Chrome drawElement) is about 2x faster where it engages; each worker costs roughly 256 MB. Per-frame capture time is exposed as `stages.captureFrameMs` in RenderPerfSummary. No published benchmark for 1080x1920@60 exists - this must be measured on the target host. Money: the CLI, packages and local rendering are free (Apache-2.0); `cloud render` bills HeyGen credits (4k bills at 1.5x), `lambda` bills AWS compute, `/reverse-any-video` and `/style-sampling` require HyperFrames Pro.",
+    "licensing": "Apache-2.0 for hyperframes, @hyperframes/core, /engine, /producer, /player, /studio and /shader-transitions - no per-render fee and no commercial-use threshold. The paid boundary is around hosted services and content: HeyGen cloud rendering (credits), HeyGen voice/music/avatar catalogs, and two Pro skills (`/reverse-any-video`, `/style-sampling`). The CLI itself phones home for the version check and anonymous telemetry, both opt-out (HYPERFRAMES_NO_UPDATE_CHECK, HYPERFRAMES_NO_TELEMETRY / DO_NOT_TRACK)."
+  },
+  "evidence": {
+    "confidence": 0.85,
+    "sources": [
+      "https://hyperframes.heygen.com/packages/cli - the complete command/flag reference (3,243 lines); source for init/add/catalog/capture/transcribe/tts/remove-background/media-use/beats/audio/normalize-audio/preview/lint/check/snapshot/keyframes/timeline/history/render/benchmark/doctor/skills/auth/cloud/lambda/share and for the `_meta` envelope, exit codes and unattended rules.",
+      "https://hyperframes.heygen.com/packages/core - @hyperframes/core entry points (compiler, variables, composition-contract, runtime) and the parse/generate/validate/GSAP-adapter snippets.",
+      "https://hyperframes.heygen.com/packages/producer - createRenderJob/executeRenderJob usage, output formats, HLS, reference_background, cancellation, startServer and the security knobs (PRODUCER_PROJECTS_DIR, PRODUCER_RESTRICT_PAGE_NETWORK).",
+      "https://hyperframes.heygen.com/packages/player - full attribute table, JS API and 14-event table for <hyperframes-player>.",
+      "https://hyperframes.heygen.com/guides/rendering - format/quality/CRF mapping, 4:4:4 measurements, input codec handling, provenance tags, 4K/HDR constraints.",
+      "https://www.npmjs.com/package/hyperframes (registry JSON) - version 0.9.54 for all packages, `engines.node >= 22`, bin entries, exports map (`./api`), dependency list (citty, hono, puppeteer-core, esbuild, fontkit).",
+      "npm tarball hyperframes-0.9.54.tgz (dist/) - QUALITY_ALIASES (looks = standard+crf16), RENDER_FORMATS, `@hf-progress` emitter in ui/progress.ts, failUsage/unknown_flag error shape, renderMachineProgress guard on TTY.",
+      "npm tarball producer-0.9.54.tgz (dist/) - RenderConfig/RenderJob/RenderStageCode/ProgressCallback/executeRenderJob signatures, executeRenderJob returning Promise<void>, server.d.ts route list and port 9847 default, RenderConfigInput = Omit<RenderConfig,'fps'> & {fps: FpsInput}.",
+      "npm tarball core-0.9.54.tgz (package.json exports) - 110 subpath exports including ./compiler, ./variables, ./runtime, ./audio-fx, ./beats, ./safe-areas.",
+      "npm tarball engine-0.9.54.tgz (dist/) - ENCODER_PRESETS (draft 28/ultrafast, standard 18/medium, high 15/fast), createFileServer, audioMixer and chunkEncoder signatures.",
+      "https://hyperframes.heygen.com/reference/html-schema - the attributes the CLI/API validate and write (data-start, data-duration, data-media-start, variables, nested compositions)."
+    ],
+    "open_questions": [
+      "Exact JSON schema of `render --json` for a single (non-batch) render: the docs only document `--json` for `--batch`, and the single-render path prints human progress plus `@hf-progress` lines. A spike should capture the full payload.",
+      "Whether `@hf-progress` lines are emitted when `--quiet` is passed (the emitter is inside the same progress callback that `--quiet` disables), and whether `--json` on render implies quiet.",
+      "The precise `RenderConfigInput`/`RenderJob` optionality for every field is only visible in the .d.ts; the published docs show a small subset, so generated TypeScript clients should be built from the d.ts, not the docs.",
+      "How much of `@hyperframes/player` works headless in Node (it is a DOM custom element with a sandboxed iframe) - assumed browser-only, unverified.",
+      "Whether `check --json` guarantees a stable schema across 0.9.x minor versions; only the section names are documented.",
+      "Real wall-clock render time for a 28 s 1080x1920@60 composition with ~15 video cuts on this WSL2 host - not measured, and the docs give no vertical-60fps benchmark."
+    ]
+  },
+  "uncertain": [
+    "key_features",
+    "cli_or_api_surface",
+    "performance_and_cost"
+  ]
+}
