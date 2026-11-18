@@ -1,0 +1,191 @@
+{
+  "basic": {
+    "title": "Animation Adapters and Determinism",
+    "domain": "Authoring / seekable animation runtime",
+    "one_liner": "HyperFrames renders by seeking to time t through pluggable adapters instead of playing, so every animation must be a pure function of t.",
+    "official_sources": [
+      "https://hyperframes.heygen.com/concepts/frame-adapters",
+      "https://hyperframes.heygen.com/concepts/determinism",
+      "https://hyperframes.heygen.com/guides/gsap-animation",
+      "https://hyperframes.heygen.com/guides/frame-sources",
+      "https://github.com/heygen-com/hyperframes/blob/main/skills/hyperframes/references/runtimes.md",
+      "https://www.npmjs.com/package/@hyperframes/core",
+      "https://www.heygen.com/research/html-to-video"
+    ],
+    "maturity": "production",
+    "last_verified": "2026-11-15"
+  },
+  "capabilities": {
+    "what_it_enables": "Frame-exact, reproducible capture of any web animation inside a 1080x1920@60 reel: kinetic type, CSS loops, WAAPI, Lottie character animation, Three.js scenes, anime.js, WebGPU/TypeGPU canvases and hand-written render(t) functions all resolve to the same pixels on every run, with no dropped frames on slow hardware because nothing is captured in real time.",
+    "key_features": [
+      "Single seek contract: the renderer calls window.__hf.seek(tSeconds, opts) once per output frame; it never calls play(). Time is computed as floor(frame)/fps with integer math, never from a clock.",
+      "GSAP is the default and first-class runtime: a paused gsap.timeline({paused:true}) registered as window.__timelines[data-composition-id] is all a composition needs.",
+      "The browser runtime ships eight named adapters: gsap, css, waapi, lottie, three, animejs, typegpu and frame-source. Five more adapters (mapbox, leaflet, google-maps, maplibre, d3) exist only as readiness gates, not time drivers.",
+      "Exported adapter interface for custom hosts (experimental v0): FrameAdapter { id, init?(ctx), getDurationFrames(), seekFrame(frame), destroy?() } with FrameAdapterContext { compositionId, fps, width, height, rootElement? }.",
+      "createGSAPFrameAdapter({id, fps, timeline}) is shipped in @hyperframes/core: it pauses the timeline, derives duration from totalDuration()/duration(), and maps frame N to timeline.seek(N/fps, false).",
+      "GSAP seeks go through totalTime(t, suppressEvents) plus a settle pass that re-renders keyframed tweens, _startAt values and zero-duration set() calls at t-epsilon and t+epsilon, so backward and random seeks land exactly.",
+      "CSS @keyframes are discovered by scanning computed style for animation-name != none; the adapter seeks via Animation.currentTime when the element's animations are reachable, and otherwise rewrites animation-delay to (authoredDelay - elapsed) and forces animation-play-state: paused.",
+      "WAAPI is captured by monkey-patching Element.prototype.animate at runtime init, so animations created by later scene scripts are registered automatically; animation.currentTime is set in milliseconds.",
+      "Lottie (lottie-web and dotLottie) is driven through lottie.getRegisteredAnimations() or a manual window.__hfLottie push, supporting goToAndStop(ms|frame), setFrame, setCurrentRawFrameValue and seek(percent), with loop handled by modulo and frames clamped to totalFrames-1.",
+      "Three.js scenes read window.__hfThreeTime and are gated on THREE.DefaultLoadingManager itemsLoaded === itemsTotal, so textures and models are loaded before frame 0.",
+      "anime.js v4 animations are collected from window.anime.running into window.__hfAnime and seeked with anim.seek(milliseconds).",
+      "TypeGPU/WebGPU compositions read window.__hfTypegpuTime and need data-requires-webgpu on the composition root.",
+      "Custom canvas/WebGL/p5 renderers either listen for the hf-seek CustomEvent ({detail:{time, waitUntil}}) or register window.__hyperframes.registerFrameSource({element, ready, render, dispose}).",
+      "window.__hf.buildReady['key'] = promise gates capture: heavy setup (shader compile, mesh upload) resolves before any frame is taken.",
+      "Capture readiness is a two-flag handshake: window.__playerReady (composition booted) and window.__renderReady (all adapters discovered, all ready promises settled), plus __hfWaitForSeekCompletion for asynchronous seek handlers.",
+      "<video> and <audio> are never seeked through the decoder during capture: the producer decodes exact frames and injects a sibling <img id=\"__render_frame_<renderId>__\"> that the composition paints from, so picture is frame-accurate and independent of Chrome's video decoder timing.",
+      "Static-frame dedup reuses byte-identical frames instead of re-seeking and re-screenshotting them (engine default on, screenshot capture mode only)."
+    ],
+    "technical_mechanism": "A composition is ordinary HTML plus data-* timing attributes. The compiler inlines sub-compositions and fonts and ships a sha256-pinned runtime bundle (hyperframe.runtime.iife.js). The producer opens the page in chrome-headless-shell with BeginFrame control, waits for window.__hf and the readiness flags, then for every frame index i: computes t = quantizeSeekTime(i/fps, fps) = floor(i/fps*fps + 1e-9)/fps, calls window.__hf.seek(t) which walks every registered adapter in order (discover -> seek), awaits the seek-completion barrier and any hf-seek waitUntil promises, then asks CDP HeadlessExperimental.beginFrame for an atomic layout->paint->composite->screenshot with frameTimeTicks and interval, falling back to Page.captureScreenshot when BeginFrame is unavailable (macOS/Windows desktop Chrome, some GPUs). Frames are written as JPEG (default) or PNG and encoded by FFmpeg, with audio mixed from the <audio>/<video> elements using the same authored timeline. Because each frame is a fresh seek plus a full repaint of changed raster tiles, the worker count, chunk boundaries and seek order cannot change a frame's pixels.",
+    "text_and_motion_capabilities": "Temporal precision is exactly one output frame: 16.667 ms at 60 fps, 33.333 ms at 30 fps. Sub-frame sampling exists only for motion blur (subFrameDivisions), which rounds on a finer grid rather than moving a frame instant. Any value that can be expressed as f(t) is renderable: GSAP eases (power/expo/elastic/back/custom), CustomEase curves authored in the Studio (parsed and re-registered deterministically), hyperframes' own wiggle ease (closed-form wiggles/type/amplitude), springs expressed as closed-form functions of t or approximated with elastic.out(1, 0.5) / back.out(1.4), per-character and per-word staggers, clip-path and mask reveals, filter blur ramps, and canvas/SVG draw calls. Motion blur, if enabled, is the documented exception to byte-identical output because it accumulates sub-frames along the motion path.",
+    "output_formats": [
+      "MP4 H.264 (default; Main profile for 1080x1920@60, yuv420p)",
+      "MOV (ProRes/H.264 depending on flags)",
+      "WebM VP9 with real alpha channel (verified with ALPHA_MODE + alphaextract) for overlays",
+      "GIF",
+      "PNG sequence (one file per frame, for external compositing)",
+      "Still frames / snapshots at arbitrary timestamps (hyperframes snapshot --at, --range) for review gates"
+    ]
+  },
+  "api": {
+    "setup_and_install": "Prerequisites: Node.js 22 or newer, FFmpeg on PATH, and a Chromium build (the CLI resolves chrome-headless-shell itself; `npx hyperframes doctor` checks all three).\n\n```bash\nnpx hyperframes init my-video   # scaffold index.html, compositions/, assets/\ncd my-video\nnpx hyperframes preview         # live preview with reload\nnpx hyperframes render          # render to MP4\n```\n\nFor adapter code or a custom host, install the packages:\n\n```bash\nnpm i @hyperframes/core @hyperframes/engine @hyperframes/producer\n# or, for a Python-driven pipeline, no install is needed beyond the CLI:\nnpx hyperframes@0.9.54 render --help\n```\n\nGSAP itself is loaded by the composition (CDN or a local file); the runtime does not bundle it. HyperFrames pins nothing about the GSAP version, but the docs examples use gsap@3.14.2 and the bundle's GSAP helpers assume the v3 timeline API.",
+    "minimal_code_example": "A complete, renderable composition with one adapter-driven animation:\n\n```html\n<!doctype html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"UTF-8\" />\n    <script src=\"https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js\"></script>\n    <style>\n      html, body { margin: 0; width: 1080px; height: 1920px; background: #06080c; }\n      #root { position: relative; width: 1080px; height: 1920px; overflow: hidden; }\n      #title { position: absolute; inset: 0; display: grid; place-items: center;\n               font: 900 96px/1.05 Inter, sans-serif; color: #fff; letter-spacing: -0.02em; }\n    </style>\n  </head>\n  <body>\n    <div id=\"root\" data-composition-id=\"hook\" data-start=\"0\" data-duration=\"3\"\n         data-fps=\"60\" data-width=\"1080\" data-height=\"1920\">\n      <h1 id=\"title\" class=\"clip\" data-start=\"0\" data-duration=\"3\" data-track-index=\"1\">\n        iPhone 14 at $330\n      </h1>\n    </div>\n    <script>\n      const tl = gsap.timeline({ paused: true });\n      tl.fromTo('#title',\n        { opacity: 0, y: 64, scale: 0.96 },\n        { opacity: 1, y: 0, scale: 1, duration: 0.42, ease: 'expo.out' }, 0.1);\n      tl.to('#title', { opacity: 0, duration: 0.18, ease: 'power2.in' }, 2.7);\n      window.__timelines = window.__timelines || {};\n      window.__timelines['hook'] = tl;   // key MUST equal data-composition-id\n    </script>\n  </body>\n</html>\n```\n\nThe same file driven by a hand-written adapter instead of GSAP:\n\n```js\nimport { createGSAPFrameAdapter } from '@hyperframes/core';\n\nconst adapter = createGSAPFrameAdapter({ id: 'hook', fps: 60, timeline });\nawait adapter.init?.({ compositionId: 'hook', fps: 60, width: 1080, height: 1920 });\nawait adapter.seekFrame(42);            // 42/60 = 0.7 s, exact and repeatable\nconsole.log(adapter.getDurationFrames()); // 180 for a 3 s timeline\n```\n\nAnd the escape hatch for a renderer that owns its own draw loop (canvas, WebGL, p5):\n\n```html\n<canvas id=\"scene\" width=\"1080\" height=\"1920\"></canvas>\n<script>\n  const draw = (t) => { /* pure function of t: no rAF, no Date.now, no Math.random */ };\n  window.addEventListener('hf-seek', (e) => {\n    draw(e.detail.time);\n    // async GPU work must be declared synchronously inside the handler:\n    e.detail.waitUntil(device.queue.onSubmittedWorkDone());\n  });\n  draw(0);\n</script>\n```\n\nOr, with the frame-source registry (preferred: it carries timing, ranges and a dispose path):\n\n```js\nconst unregister = window.__hyperframes.registerFrameSource({\n  element: document.getElementById('scene'),\n  ready: initWebGL(),                       // awaited before capture\n  render: (sourceTime, signal) => drawScene(sourceTime, signal),\n  dispose: () => releaseWebGL(),\n});\n```",
+    "cli_or_api_surface": [
+      "window.__timelines[compositionId] = gsapTimeline  — the primary registration point; the key must equal data-composition-id.",
+      "window.__hf.seek(tSeconds, { suppressEvents })  — called once per output frame by the engine; the only clock the page gets.",
+      "window.__hf.duration / window.__hf.lengthSource / window.__hf.durationSource  — resolved render length and what determined it.",
+      "window.__hf.buildReady['key'] = Promise  — defer capture until heavy setup resolves; a rejection fails the render with the reason.",
+      "window.__hf.animationEnd() / window.__hf.clipWindow(el)  — introspect the captured timeline and a clip's visibility window.",
+      "window.__hfWaitForSeekCompletion()  — page-side barrier for asynchronous seek handlers.",
+      "window.__hyperframes.registerFrameSource({ element, ready, render, dispose, sourceRange })  — registers a function-of-time scene; returns an unregister function.",
+      "window.addEventListener('hf-seek', e => { e.detail.time; e.detail.waitUntil(promise) })  — the low-level frame callback; waitUntil must be called synchronously.",
+      "window.__hfAnime / window.__hfLottie / window.__hfThreeTime / window.__hfTypegpuTime  — the globals the built-in adapters read.",
+      "FrameAdapter, FrameAdapterContext, createGSAPFrameAdapter  — exported by @hyperframes/core for custom hosts (experimental v0).",
+      "npx hyperframes render [--fps 60] [--workers N] [--quality draft|standard|high] [--start s --end s] [--format mp4|webm|mov|gif|png] [--docker]",
+      "npx hyperframes snapshot --at 0,0.6,2.9  — render specific timestamps to inspect seeking correctness without a full render.",
+      "npx hyperframes keyframes --json [--selector '#id']  — lists GSAP/CSS/anime.js keyframes and eases for audit.",
+      "npx hyperframes lint / check  — static contract and runtime behaviour gates (catches missing timeline registrations, CSS transform conflicts, static scenes).",
+      "data-no-timeline  — on a root or host that registers no timeline, skipping the 45 s player-ready poll."
+    ],
+    "key_config_options": [
+      "fps (default 30; the reel pipeline uses 60) — locks frame count and the seek grid; cannot be changed per frame.",
+      "quality: draft | standard | high (default standard) — trades capture/encode quality and speed.",
+      "format: jpeg | png (default jpeg) and jpegQuality (default 80) — PNG is required for lossless or alpha work and is much heavier on disk.",
+      "concurrency: number | 'auto' (default auto) — worker count; coresPerWorker default 2.5 and minParallelFrames default 120 decide when parallel capture starts.",
+      "playerReadyTimeout (45 s) — how long each composition may take to register its timeline; the reason a timeline-free composition costs 45 s per render without data-no-timeline.",
+      "renderReadyTimeout (15 s) — how long the runtime may take to finish adapter discovery and buildReady promises.",
+      "staticFrameDedup (default true) — reuses byte-identical frames instead of re-seeking them; only in screenshot capture mode.",
+      "browserGpuMode: software | hardware | auto (default software) — WebGL availability; software SwiftShader is 5-50x slower for WebGL work.",
+      "forceScreenshot (default false) — skip BeginFrame and use Page.captureScreenshot; slower but works where BeginFrame is unsupported.",
+      "useDrawElement / enableDrawElementWorkerEncode (default true, macOS/Windows hardware GPU only) — faster capture path with a self-verification fallback to screenshots.",
+      "data-motion-blur=\"on\" plus data-motion-blur-shutter on the composition root — opt-in per-element blur; breaks byte-identical output.",
+      "data-requires-webgpu — required on a WebGPU composition root; without it the TypeGPU adapter never runs.",
+      "data-playback-rate (0.1-10) and data-media-start on media — retiming and trimming are authored, never scripted with currentTime."
+    ]
+  },
+  "integration": {
+    "pipeline_fit": "Augments, and for overlays replaces, the current stack. The Fenixsoft pipeline already owns beat-synced cuts, audio mixing and QA in Python/FFmpeg; HyperFrames is a bad fit for cutting 4-6 camera angles of product footage (that is FFmpeg's job and it is already measured against the beat grid) but a very good fit for everything that must be typographically exact and repeatable: the price pill, the kinetic captions, the badge stack, the trust strip and the CTA card. The recommended shape is a hybrid: FFmpeg produces the cut picture and the mixed bed, HyperFrames renders a transparent WebM (VP9 alpha) or a full-frame overlay pass that FFmpeg composites on top. That keeps render_video.py's cut/beat logic and qa_check.py's gates intact while moving all text and motion graphics to a seekable timeline where the same JSON always yields the same pixels.",
+    "python_integration": "Three levels, cheapest first.\n\n1) CLI via subprocess (works today, no Node code): write the composition folder, run the render, parse the log.\n\n```python\nimport json, subprocess, pathlib\n\ndef render_overlay(project_dir: pathlib.Path, out: pathlib.Path, timeout=900) -> dict:\n    cmd = [\"npx\", \"--yes\", \"hyperframes@0.9.54\", \"render\",\n           \"--format\", \"webm\", \"--fps\", \"60\", \"--workers\", \"2\",\n           \"--output\", str(out)]\n    proc = subprocess.run(cmd, cwd=project_dir, capture_output=True, text=True, timeout=timeout)\n    if proc.returncode != 0:\n        raise RuntimeError(f\"hyperframes render failed ({proc.returncode}):\\n{proc.stderr[-4000:]}\")\n    return {\"output\": str(out), \"log_tail\": proc.stdout[-2000:]}\n```\n\nCaveats: npm resolution must be warm (pin the version, or install once into the project); the process needs a writable HOME for ~/.cache/hyperframes; timeouts must exceed playerReadyTimeout (45 s) plus per-frame capture; stderr carries the actionable error and stdout the progress lines.\n\n2) Node bridge for adapter-level tests: a ~40-line script that imports @hyperframes/core and @hyperframes/engine, opens the page with Puppeteer, calls window.__hf.seek(t) for a list of timestamps and returns per-frame image hashes. That is the cheapest way to prove determinism (same input -> same sha256 per frame) in CI without a full encode.\n\n3) Direct producer API from Node (`@hyperframes/producer`) when you need progress events, still export or partial ranges without shelling out; call it from Python through a tiny Node helper because there is no Python binding.",
+    "data_injection": "Per-video data enters through composition variables, never string concatenation inside the script block. Declare a schema on <html data-composition-variables='[{\"id\":\"price\",\"type\":\"string\",\"default\":\"$330\"}]'>, bind declaratively with data-var-text=\"price\" / data-var-src / CSS var(--price), and pass values with data-variable-values='{...}' on a scene host or with the CLI's variable flag. For lists that must drive a timeline (caption words, per-word timings) emit a JSON island — <script type=\"application/json\" id=\"words\">…</script> — escape it with json.dumps(..., ensure_ascii=False).replace('</', '<\\\\/') and parse it in the composition, so a quote in a product name cannot break the timeline code. Word timings generated by align_words.py map one-to-one onto the {id, text, start, end} shape HyperFrames' own transcribe command emits.",
+    "footage_and_asset_handling": "Existing MP4s are consumed as <video class=\"clip\" src=\"assets/shot01.mp4\" data-start=\"0\" data-duration=\"1.52\" data-media-start=\"3.20\" data-track-index=\"0\" muted playsinline> — the in-point is data-media-start, the slot is data-start/data-duration, and the renderer decodes the exact frame instead of relying on the decoder. Audio beds are <audio> elements with data-volume and optional data-fade-in/out; the engine feeds FFmpeg -ss for the same offsets, so A/V stays locked to one authored timeline. Fonts: the compiler inlines @font-face with woff2 data URIs (18 bundled families resolve by name, everything else must ship a file), which removes FOIT and network latency from capture. Images and SVGs are local project assets; remote URLs are a determinism and CORS risk and should be downloaded first.",
+    "migration_effort": "medium",
+    "integration_steps": [
+      "Freeze the current FFmpeg cut list as the source of truth; export it as JSON (clip, in-point, duration, beat index) so both renderers can consume it.",
+      "Install Node 22 + FFmpeg and pin hyperframes@0.9.54 in the repo (or bake it into the render image) — an unpinned npx is a silent reproducibility hole.",
+      "Create one template project: index.html (1080x1920, data-fps=\"60\", data-duration=\"28\"), compositions/overlay.html holding the price pill, badges, captions and CTA, and assets/fonts with the brand woff2 files.",
+      "Port the caption stage first: convert align_words.py output into a words JSON island, build word groups in the composition, and register one paused GSAP timeline under the scene's data-composition-id.",
+      "Render a transparent WebM of the overlay only and composite it in FFmpeg over the existing cut; compare against the current burn-in with qa_frames/contact_sheet.",
+      "Add the determinism gate to CI: render 3 fixed timestamps twice (snapshot --at) and assert identical sha256 per frame; fail the build on drift.",
+      "Only after overlays are stable, consider moving the cut picture itself into HyperFrames (multiple <video> clips on tracks) — that is a rewrite of the cut stage, not an overlay change."
+    ]
+  },
+  "constraints": {
+    "requirements": [
+      "Node.js 22+ (the CLI and all @hyperframes/* packages).",
+      "FFmpeg on PATH for encoding and audio muxing.",
+      "A Chromium build reachable by Puppeteer; BeginFrame capture specifically needs chrome-headless-shell with --enable-begin-frame-control, which regular desktop Chrome on macOS does not support (falls back to screenshots).",
+      "Writable HOME for ~/.cache/hyperframes (fonts) and the FFmpeg/frame temp space.",
+      "Optional GPU for WebGL/WebGPU compositions; without one, SwiftShader is 5-50x slower and some compositions are refused unless allowSoftwareWebGpu is set.",
+      "A finite authored data-duration on the root for Three.js, WebGPU, unbounded or timeline-free compositions."
+    ],
+    "limitations": [
+      "Seek resolution is one output frame. Anything that must happen between frames (true sub-frame motion blur, 120 Hz sampling) is not available except through the motion-blur sub-frame path, which is explicitly not byte-identical.",
+      "Every animated value must be a pure function of t. Any library that owns its own clock (most canvas/WebGL helpers, p5's draw loop, autoplaying video, CSS animations without a controller) produces nondeterministic output until it is adapted.",
+      "gsap.from() records its start values on the first seek and then drifts when the scene is re-seeked; use fromTo() for anything that must survive backward or random seeks. The engine's own comments call this out as a real corruption source.",
+      "Infinite repeats break duration inference and can hang the render; repeats must be finite (repeat: Math.max(0, Math.floor(duration / cycle) - 1)).",
+      "CSS animations need finite animation-iteration-count and animation-fill-mode: both, and their timing is read from computed style; when the adapter cannot reach the Animation object it rewrites animation-delay every seek, so any code that also writes animation-delay will fight it.",
+      "WAAPI animations run on the document timeline, so an animation created at page load must be offset by its composition start (the adapter uses delay/compositionTimeMs); creating them at time 0 in a scene that starts later is a classic desync.",
+      "Lottie is only discovered through window.lottie.getRegisteredAnimations() or a manual window.__hfLottie push; dotLottie-web must be initialized with autoplay:false, loop set, autoResize:false and a local WASM URL.",
+      "Three.js must read window.__hfThreeTime instead of THREE.Clock; a scene that calls clock.getDelta() in its own rAF loop renders a different frame every run.",
+      "TypeGPU/WebGPU requires data-requires-webgpu on the root and is polled on a 250 ms debounce, so very short WebGPU beats can lose their first frames if setup is not behind buildReady.",
+      "The exported FrameAdapter interface is explicitly experimental v0 and its signatures may change before v1; the built-in runtime uses an internal seek({time, suppressEvents}) shape, not seekFrame(frame).",
+      "Motion blur (data-motion-blur) is the documented exception to byte-identical determinism; if the pipeline hashes frames, it must be off.",
+      "A composition that never registers a timeline costs a fixed 45 s per render unless the root declares data-no-timeline.",
+      "Parallel workers and <video>-heavy compositions interact badly: Chrome cannot seek several video elements at once without exhausting decoders, which is why the docs warn that video-heavy compositions can time out in parallel mode.",
+      "data-track-index is a Studio lane only; it does not control paint order, so overlap must be authored with z-index."
+    ],
+    "known_issues": [
+      "Missing data-no-timeline on a timeline-free composition adds a fixed 45 s wait to every render (documented in the troubleshooting guide as 'every render takes about 45 seconds longer').",
+      "Timeline registered before an asynchronous build finishes renders blank; lint code gsap_timeline_registered_before_async_build.",
+      "A host id that differs from its scene's timeline key makes each render wait 45 s per scene and then show static frames.",
+      "CSS transform set in stylesheet plus GSAP animating the same transform is a lint error (gsap_css_transform_conflict) and produces a wrong first frame under random access.",
+      "Tweening visibility on a .clip element freezes scenes; the documented pattern is to tween opacity and then tl.set(visibility) at the end.",
+      "Page-side WebGL compositing (enablePageSideCompositing) computes in f32, so byte-equality fixtures are not valid on that path; correctness is pinned by PSNR instead.",
+      "Two timelines animating the same property of the same element produce order-dependent results that differ between preview and render."
+    ],
+    "performance_and_cost": "Cost is dominated by seek + capture, not by encode: every frame is a fresh seek through all adapters plus one BeginFrame screenshot. Documented knobs rather than measured numbers: concurrency 'auto' with coresPerWorker 2.5 and a 120-frame minimum before parallel capture; static-frame dedup removes repeated frames; the drawElement fast path (macOS/Windows + hardware GPU) pipelines JPEG encode in a worker and claims a ~1.65-1.96x wall-time speedup; software WebGL is 5-50x slower than hardware. [uncertain] Wall-clock seconds per frame at 1080x1920@60 on this machine are unmeasured; the project's own 28 s / 1680-frame target needs a benchmark before adoption. No per-render fee: rendering is local and free; the only paid surface is HyperFrames Pro/cloud/HeyGen models, which this pipeline does not need.",
+    "licensing": "HyperFrames is Apache-2.0 (CLI, core, engine, producer, player, shader-transitions, aws-lambda), with no per-render fees and no commercial-use threshold. GSAP is free for commercial use since 3.13 under Webflow's standard 'no charge' license, including SplitText, MorphSVG and the other former Club plugins; the only restriction is building a no-code visual animation tool that competes with Webflow. Three.js (MIT), anime.js (MIT), lottie-web (MIT) and dotLottie-web (MIT) are permissive; the bundled fonts are Fontsource/OFL. Individual catalog blocks are part of the Apache-2.0 repository, but the catalog pages do not state a per-block license — [uncertain] whether a block copied into a commercial template carries an additional attribution requirement."
+  },
+  "evidence": {
+    "confidence": 0.87,
+    "sources": [
+      {
+        "url": "https://hyperframes.heygen.com/concepts/frame-adapters",
+        "note": "Exact FrameAdapter/FrameAdapterContext signature, createGSAPFrameAdapter usage, the five-point determinism contract, and the explicit 'experimental v0' status."
+      },
+      {
+        "url": "https://hyperframes.heygen.com/concepts/determinism",
+        "note": "Frame clock t = floor(frame)/fps, the no-clock/no-randomness/no-mid-render-fetch rules, BeginFrame capture, and the motion-blur exception."
+      },
+      {
+        "url": "https://hyperframes.heygen.com/guides/gsap-animation",
+        "note": "The paused-timeline contract, the fromTo-over-from rule, font-load-before-measure pattern, and 'media belongs to the runtime'."
+      },
+      {
+        "url": "https://hyperframes.heygen.com/guides/frame-sources",
+        "note": "registerFrameSource({element, ready, render, dispose}) semantics, sourceRange clamping, per-element uniqueness, cancellation via AbortSignal."
+      },
+      {
+        "url": "https://github.com/heygen-com/hyperframes/blob/main/skills/hyperframes/references/runtimes.md",
+        "note": "Per-runtime driving recipe: CSS fill-mode, WAAPI pause + document time, Lottie window.__hfLottie, anime.js window.__hfAnime + createSeededRandom, hf-seek for canvas, buildReady, mulberry32, finite repeats."
+      },
+      {
+        "url": "https://www.heygen.com/research/html-to-video",
+        "note": "Author's account of seek-don't-play, the three-method FrameAdapter, chrome-headless-shell + BeginFrame flags, sha256-pinned runtime bundle, N-Chrome chunked rendering, and the video-heavy parallel timeout gotcha."
+      },
+      {
+        "url": "https://www.npmjs.com/package/@hyperframes/core",
+        "note": "Published package (0.9.54) whose dist/adapters/*.d.ts and dist/hyperframe.runtime.iife.js were read directly for the adapter list, seek implementations and the __hyperframes public surface."
+      },
+      {
+        "url": "https://hyperframes.heygen.com/help",
+        "note": "The 45 s player-ready timeout, data-no-timeline, 'animation is static' and 'media plays out of sync' failure modes, and the 'do not animate width/height on a video' rule."
+      },
+      {
+        "url": "https://hyperframes.heygen.com/reference/html-schema",
+        "note": "Root/clip/media attribute contract, the animation contract bullet list, and asynchronous timeline registration rule."
+      }
+    ],
+    "open_questions": [
+      "Measured wall-clock per frame for 1080x1920@60 on this WSL2 box, with and without hardware WebGL — needs a benchmark run, not a guess.",
+      "Whether the CSS adapter's animation-delay rewriting behaves correctly when a composition also mutates animation-delay at runtime (e.g. a stagger built by script after init).",
+      "Whether seekFrame(frame) on a custom FrameAdapter is what the shipped engine actually calls, or only the host-facing v0 surface (the engine calls window.__hf.seek(time), and the runtime's internal adapter shape is seek({time})).",
+      "Exact byte-identical guarantee across different Chromium minor versions; the docs only promise it when the environment is pinned (Docker).",
+      "How the Lottie adapter handles expressions (lottie-web evaluates them per frame) — whether expression-driven properties stay deterministic under random access."
+    ]
+  },
+  "uncertain": [
+    "performance_and_cost",
+    "licensing"
+  ]
+}
