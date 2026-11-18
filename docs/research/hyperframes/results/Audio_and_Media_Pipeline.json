@@ -1,0 +1,180 @@
+{
+  "basic": {
+    "title": "Audio and Media Pipeline",
+    "domain": "Media handling: audio mixing, video/image assets, codecs, alpha",
+    "one_liner": "Media is plain <audio>/<video>/<img> markup with timing attributes; one Web Audio graph drives preview and an equivalent FFmpeg mix drives the render, so the two agree.",
+    "official_sources": [
+      "https://hyperframes.heygen.com/reference/html-schema",
+      "https://hyperframes.heygen.com/reference/audio-effects",
+      "https://hyperframes.heygen.com/guides/voice-and-audio",
+      "https://hyperframes.heygen.com/guides/rendering",
+      "https://hyperframes.heygen.com/guides/video-components",
+      "https://hyperframes.heygen.com/guides/media",
+      "https://hyperframes.heygen.com/packages/cli",
+      "https://hyperframes.heygen.com/reference/lint-rules"
+    ],
+    "maturity": "beta",
+    "last_verified": "2026-11-15"
+  },
+  "capabilities": {
+    "what_it_enables": "A composition can carry a complete, repeatable mix - narration, a music bed that ducks itself under the voice, beat-placed effects, per-clip fades and automation - plus video, images, SVG, animated GIFs and custom fonts, and render it to H.264/ProRes/VP9 with alpha, without an external DAW or NLE step.",
+    "key_features": [
+      "Media is declared in HTML: `<audio>`/`<video>` with `id`, `data-start`, `data-duration`, `data-media-start` (source in-point), `data-playback-rate` (0.1-10), `data-volume`, `data-fade-in`/`data-fade-out`, `data-has-audio` and `muted`.",
+      "Timing may be numeric or relative: `data-start=\"intro + 0.5\"` references another clip's end (`clip-id`, `+s`, `-s`), must resolve inside one composition and may not cycle.",
+      "`data-track-index` is a Studio lane label only - the render never reads it, it does not order paint (use z-index) and it does not prevent overlap. All audible clips are mixed regardless of track.",
+      "`data-volume` is a linear gain where 1 = 0 dB and the ceiling is +12 dB (= 3.98); `MAX_AUDIO_GAIN_DB = 12` is shared by Studio, preview and render so the fader cannot drift.",
+      "Clip-edge fades: `data-fade-in`/`data-fade-out` in seconds, linear, anchored to the clip's own edges, multiplied on top of `data-volume` and any volume lane; over-long fades are scaled to meet inside the clip.",
+      "Looping: the native `loop` attribute repeats a short source inside a longer slot in preview and export; every repeat starts at `data-media-start`, and playback rate applies to the repeats.",
+      "Four audio attributes carry the mix: `data-fx-chain` (JSON, ordered effect list), `data-automation` (JSON, lanes on volume or an effect param), `data-fx-carve` (JSON, ducking settings) and `data-audio-group` (a plain group id).",
+      "Effect registry: 16 effects in four families - filters (highpass, lowpass, peaking, lowshelf, highshelf), dynamics (gain, compressor, limiter, truepeak, gate), nonlinear (saturate, bitcrush), time (delay, reverb, chorus, phaser, pitchshift). Out-of-range values are clamped on read.",
+      "`truepeak` is the delivery limiter: 4x oversampled, lookahead 0.5-10 ms, reads the ceiling correctly instead of letting inter-sample peaks through like `limiter` does.",
+      "22 presets in four families (voice/repair/character/space) plus 5 named EQ jobs (Tame Boominess, Reduce Mud, Reduce Boxiness, Add Clarity, Soften Harshness) and 5 one-knob profiles (Evenness, Tightness, Warmth, Space, Crush).",
+      "Automation lanes: `target` is `volume` or `fx.<nodeId>.<param>`, points are `{t, v, curve}` with optional `viaX`/`viaY`, max 512 points per lane, and `curve` bends the segment leaving a point.",
+      "Voiceover carve (sidechain ducking): `data-fx-carve={\"enabled\":true,\"sources\":[\"voiceover\"],\"strength\":0.25}` on the bed; strength derives cut depth, band count, width, intelligibility bias, level room and target depth. It writes ordinary peaking filters + a gain stage tagged `fromCarve`, so re-running replaces only its own nodes.",
+      "Audio groups: `<hf-audio-group id=\"voiceover\" data-label data-volume>` sums its members onto one bus with its own chain, fader and automation; groups do not nest, membership lives on the member (`data-audio-group`), and a muted video ignores the attribute.",
+      "Master bus: `data-fx-chain` on the top-level composition root runs once over the sum of every clip and group, after each group's chain - the only way to put one limiter across everything. There is no master automation.",
+      "Mixing is a straight sum at unity: `amix` with `normalize=0`, so adding a track never turns the others down and loud overlaps can exceed 0 dBFS; put a `truepeak` on the master bus to bound it.",
+      "Delivery ceiling: export keeps the file under -1 dBTP by inserting a `truepeak` at -3 dBTP when the mix would pass it, and if a peak still gets through it lowers the whole mix by one flat amount and prints an `audio_lowered` warning.",
+      "Adaptive helpers in core: voiceover carve, an 'Even Out Levels' leveller that writes its own `gain` lane (windowed RMS, explicitly not LUFS normalisation), presets, jobs and profiles - all producing the same chain you could have written by hand.",
+      "Media analysis CLI: `hyperframes audio` reports per-sound moments (start, steepest rise, peak, 40 dB tail), onsets with strength, LUFS integrated/short-term (ITU-R BS.1770, matching FFmpeg ebur128 to 0.1 LU), sample/true peak, clipping, silence spans, a `kind` guess and a ~2,000-value envelope - plus a whole-recording `--read` mode with voice/effects/music/ambience lines.",
+      "`hyperframes beats` decodes the bed with FFmpeg, runs the same beat tracker Studio uses, and writes `beats/<audio-path>.json` (`{version, audio, beats:[{time, strength}]}`); it refuses to invent a grid for beatless music (count 0, exit 0).",
+      "`hyperframes normalize-audio --reference <id> --target <id>` measures both clips with FFmpeg's integrated EBU R128 loudness, accounts for their current `data-volume`, and writes an absolute matched gain that respects the +12 dB and -1.5 dBTP caps.",
+      "Images: `<img>` and `<svg>` work directly; HEIF/HEIC photos are pre-converted, animated GIFs of 5 MB+ in the entry composition are prepared into a seekable video, and base64 media is a lint error.",
+      "Fonts: project-local `.woff2` via `@font-face` is the deterministic path (aliases + a bundled font set, `injectDeterministicFontFaces`, `failClosedFontFetch`), Google Fonts is supported by localizing the stylesheet, and `local-only` system families alias in distributed renders.",
+      "Alpha in and out: VP9/VP8 WebM (sidecar alpha) and ProRes 4444 inputs are decoded with the alpha-aware decoder and extracted as PNG frames; output alpha is WebM (VP9 yuva420p, `alpha_mode=1`), MOV (ProRes 4444 yuva444p10le) or a PNG sequence.",
+      "Codec coverage: MP4 = H.264 + AAC (H.265 10-bit BT.2020 for HDR), WebM = VP9 + Opus, MOV = ProRes 4444 (+alpha) or 422 profiles, plus GIF, PNG sequence and HLS (H.264/AAC remuxed to .ts).",
+      "`/media-use` skill + `hyperframes media-use` subcommands resolve, generate or import music, SFX, images, icons, logos, voiceover, avatar video and color grades into the project, cached and de-duplicated."
+    ],
+    "technical_mechanism": "The compiler parses `<audio>`/`<video>`/`<img>` (parseAudioElements, parseVideoElements, parseImageElements) into AudioTrack/VideoElement records. At render time each audio source is decoded by FFmpeg to PCM, trimmed with `atrim`/`-ss`, gained (`volume`, with `eval=frame` for envelopes), faded (`afade`), delayed to its film position (`adelay`) and summed with `amix=...:normalize=0`; at most 96 inputs enter one graph, larger mixes are summed in stages. Any `data-fx-chain`/`data-automation` is applied on WAV with an OfflineAudioContext inside the same headless Chrome that renders frames, using the same graph builders as preview - one implementation per effect, so preview predicts render by construction. The result is PCM s16le 48 kHz stereo (`audio.m4a`), then `truepeak`/delivery limiting, then AAC 192k for MP4/MOV or Opus 128k for WebM. Video is decoupled: FFmpeg extracts every needed source frame ahead of capture (JPEG by default, PNG for alpha-capable or colour-sensitive sources), and the renderer injects those frames into the page so Chrome never has to decode the source itself.",
+    "text_and_motion_capabilities": "Sound and type share one clock, which is the point for kinetic captions: word timings come from `transcribe` (word-level `[{text,start,end}]` in transcript.json) and each caption gets `data-start`/`data-duration` in the same film seconds the audio mix uses, so a caption cannot drift from its syllable. `hyperframes audio --only onsets` gives the exact steepest-rise and peak instants of an effect so a cut or a punch-in can land on the transient rather than the file start; `beats` gives a measured beat grid for snapping. Audio-reactive captions are a documented pattern (single tween per group, sampling the audio at 100-200 ms). On the delivery side the same pipeline guarantees the mix is <= -1 dBTP, which is what keeps platform players from compressing the top end of a caption hit.",
+    "output_formats": [
+      "MP4 / H.264 (yuv420p; yuv444p with `--chroma-subsampling 444`) + AAC 192k, faststart - H.265 10-bit BT.2020 instead when HDR is active.",
+      "WebM / VP9 yuva420p with `alpha_mode=1` + Opus 128k - the only format whose alpha browsers decode.",
+      "MOV / ProRes 4444 yuva444p10le with alpha + AAC 192k; `--prores-profile hq|422|lt|proxy` switches to 4:2:2 without alpha.",
+      "PNG sequence (RGBA, `frame_000001.png`, ...) + an `audio.m4a` sidecar when the composition has sound; GIF (no audio, binary transparency, <=30 fps).",
+      "HLS VOD directory: `master.m3u8`, `video.m3u8` + `video_NNNNN.ts`, and `audio.m3u8`/`audio_NNNNN.ts` when there is sound (stream copy of the H.264/AAC encode).",
+      "Intermediate audio artefacts: per-clip extracted WAV, trimmed WAV, FX-processed WAV, group WAVs, `master-sum.wav`, and the final `audio.m4a` (16-bit PCM 48 kHz stereo at the mix stage).",
+      "Analysis artefacts: `beats/<audio>.json`, transcript.json / transcript.srt / .vtt, `audio` JSON reports (moments, onsets, loudness, silence, envelope), `caption_audit`-style CPS data is Studio-side."
+    ]
+  },
+  "api": {
+    "setup_and_install": "Nothing to install for the media model itself - it is HTML. To use the analysis/mixing commands you need the CLI plus FFmpeg:\n\n```bash\nnpm install -g hyperframes@0.9.54   # or npx hyperframes ...\nffmpeg -version && ffprobe -version\nnpx hyperframes doctor              # checks ffmpeg, ffprobe, node, bundled audio\n```\n\nOptional local models: `npx hyperframes models install parakeet` (~640 MB, faster/more accurate ASR), Kokoro TTS (no API key), `u2net_human_seg` ONNX for `remove-background` (~168 MB). HeyGen-backed sources (music catalog, cloned voices, avatars, stem separation) need `npx hyperframes auth login` and the separate `heygen` CLI >= 0.3.0.",
+    "minimal_code_example": "```html\n<!-- A 12 s scene: muted footage, a music bed that ducks under narration, one SFX -->\n<div id=\"root\" data-composition-id=\"main\" data-start=\"0\" data-duration=\"12\"\n     data-width=\"1080\" data-height=\"1920\"\n     data-fx-chain='{\"version\":1,\"nodes\":[{\"type\":\"truepeak\",\"id\":\"m1\",\"label\":\"Delivery ceiling\",\"params\":{\"ceiling\":-1.5,\"lookahead\":3,\"release\":80}}]}'>\n\n  <video id=\"shot-01\" class=\"clip\" src=\"assets/01_back_cameras.mp4\" muted playsinline\n         data-start=\"0\" data-duration=\"3.2\" data-media-start=\"3.20\" data-track-index=\"0\"></video>\n\n  <style>hf-audio-group { display: none !important; }</style>\n  <hf-audio-group id=\"voiceover\" data-label=\"Voiceover\" data-volume=\"1\"></hf-audio-group>\n\n  <audio id=\"vo-01\" data-audio-group=\"voiceover\" src=\"assets/vo.wav\"\n         data-start=\"0.4\" data-duration=\"11.6\" data-volume=\"1\"\n         data-fx-chain='{\"version\":1,\"nodes\":[{\"type\":\"highpass\",\"id\":\"n1\",\"params\":{\"frequency\":120,\"q\":0.707,\"poles\":\"2\"}}]}'></audio>\n\n  <audio id=\"music\" src=\"assets/bed.wav\" loop\n         data-start=\"0\" data-duration=\"12\" data-volume=\"0.45\"\n         data-fade-in=\"0.4\" data-fade-out=\"1.2\"\n         data-fx-carve='{\"enabled\":true,\"sources\":[\"voiceover\"],\"strength\":0.25}'\n         data-automation='{\"version\":1,\"lanes\":[{\"target\":\"volume\",\"points\":[{\"t\":0,\"v\":0.45},{\"t\":11,\"v\":0.45},{\"t\":12,\"v\":0}]}]}'></audio>\n\n  <audio id=\"whoosh\" src=\"assets/sfx/whoosh.mp3\"\n         data-start=\"3.15\" data-duration=\"0.6\" data-volume=\"0.7\"></audio>\n</div>\n```\n\n```bash\n# Measure what you placed, then render\nnpx hyperframes audio --element '#music' --json          # loudness, onsets, envelope in film time\nnpx hyperframes beats . --json                           # writes beats/bed.wav.json\nnpx hyperframes normalize-audio --reference vo-01 --target music --json\nnpx hyperframes lint . && npx hyperframes render --output out.mp4\n```",
+    "cli_or_api_surface": [
+      "`hyperframes audio <files...>` - one report per sound: moments, onsets, loudness (integrated + short-term max LUFS), sample/true peak, clipping, silence, kind, envelope. `--json` returns file seconds plus each clip's `start`, `mediaStart`, `playbackRate`, `dataStart` so film time = `start + (t - mediaStart)/playbackRate`.",
+      "`hyperframes audio --element '#riser' | --at 12 | --range 10,14` - query the film instead of a file; `--only onsets,beats,downbeats,bpm,sections,describe` adds music structure (downbeat meter is a low-confidence guess, bpm comes from the beat provider).",
+      "`hyperframes audio <recording> --read [--quality best]` - one line per sentence/effect/music stretch/ambience span, with voice-vs-music loudness over the overlap; `--layer music|sfx|voice` reads a known single-layer file locally with no upload.",
+      "`hyperframes beats [dir|file] [--json]` - writes `beats/<audio-path>.json`; `{ok, file, count, bpm}` for a folder, plus `beatTimes` for a file.",
+      "`hyperframes normalize-audio --reference <id> --target <id> [--write] [--tolerance 0.5] [--json]` - EBU R128 integrated match, respects `data-volume`, rejects remote or out-of-project sources.",
+      "`hyperframes transcribe <audio|video|srt|vtt|json> --to srt|vtt --model --language --engine --json` - word-level timings for captions; `--preserve-cues` keeps authored cue boundaries.",
+      "`hyperframes tts \"text\" --voice --speed --lang --output` - local Kokoro speech, no API key.",
+      "`hyperframes remove-background <video|image> -o out.webm|out.mov|out.png [--background-output plate.webm] [--device] [--quality]` - produces alpha media for `<video>`/`<img>`.",
+      "`hyperframes media-use resolve|candidates|adopt|analyze|voices|avatars|doctor|stats --type bgm|sfx|image|icon|logo|voice|video|brand|grade|lut` - fetch/generate/import one asset and record it in `.media/`.",
+      "`hyperframes media-treatment --selector '#hero' --grading '{\"preset\":\"skin-soft\",\"intensity\":0.6}' --apply` - writes `data-color-grading` on real `<img>`/`<video>`/`<canvas>`.",
+      "`hyperframes capture ... --video <folder>` - pulls video/audio out of a captured page into the project.",
+      "HTML attributes (the real API): `data-start`, `data-duration`, `data-media-start` (`data-playback-start` for nested composition hosts), `data-playback-rate`, `data-volume`, `data-fade-in`, `data-fade-out`, `data-has-audio`, `loop`, `data-audio-group`, `data-fx-chain`, `data-automation`, `data-fx-carve`, `data-color-grading`, `data-beat`.",
+      "`<hf-audio-group id data-label data-volume data-hidden data-fx-chain data-automation>` - a bus; must be closed explicitly (`</hf-audio-group>`), must be inert (`display:none!important` or the runtime's `display:contents!important`).",
+      "@hyperframes/core audio entry points: `./audio-fx`, `./audio-fx-runtime`, `./audio-fx-presets`, `./audio-fx-jobs`, `./audio-fx-profiles`, `./audio-fx-eq`, `./audio-fx-tail`, `./audio-automation`, `./audio-carve`, `./audio-groups`, `./audio-gain` (MAX_AUDIO_GAIN_DB), `./audio-leveller`, `./audio-analysis`, `./audio-fade`, `./media-timing`, `./media-volume-envelope`, `./audible-video`, `./beats`.",
+      "@hyperframes/engine internals that define behaviour: `processCompositionAudio`, `parseAudioElements`, `parseMasterFxChain`, `applyAudioFxChain` (OfflineAudioContext), `MAX_MIX_INPUTS = 96`, `MIXED_AUDIO_FILENAME = 'audio.m4a'`, `resolveFrameFormat` (alpha-capable -> PNG), `extractVideoFramesRange`, `createFileServer`."
+    ],
+    "key_config_options": [
+      "`data-volume` 0..3.98 (0..+12 dB), default 1. On a clip it is applied ahead of the clip's effects (so a compressor reacts to it); on a group it stays after its effects, like a track fader.",
+      "`data-fade-in`/`data-fade-out` seconds, linear, anchored to clip edges, multiplied on top of volume and any lane; fades that together exceed the clip are scaled to meet.",
+      "`data-media-start` seconds into the source (trim); `data-playback-rate` 0.1-10, overridden per time by a `rate` automation lane; `loop` for in-slot repetition.",
+      "`data-automation` = `{version:1, lanes:[{target:'volume'|'fx.<id>.<param>', points:[{t,v,curve,viaX,viaY}]}]}` - `t` is clip-relative on a clip and composition-relative on a group; max 512 points; a lane holds its first value backwards and last value forwards (a bed that starts before the voice needs an explicit `t:0` no-cut point).",
+      "`data-fx-chain` = `{version:1, nodes:[{type,id,label,params,enabled,fromCarve,fromPreset}]}` - array order is signal order; `id` is the automation handle; `enabled:false` is bypass; unknown types only surface at render.",
+      "`data-fx-carve` = `{enabled, sources:[ids|group], strength}` - put it on the bed, never on a voice; strength 0 = spectral only, 0.25 default = 6 dB dip in 3 bands, 0.5 = 10 dB (audible as an effect), above 0.5 for a loud bed under a quiet voice.",
+      "`data-audio-group` = a plain group id; ignored on a muted video or `data-has-audio=\"false\"`; `\"\"` means no group; group ids and element ids share one namespace.",
+      "Master bus = `data-fx-chain` on the top-level `data-composition-id` root only; not applied when the composition is embedded as a sub-composition; master `data-automation` is not read.",
+      "`PRODUCER_AUDIO_GAIN` (default 1) multiplies the finished sum once, before the master bus chain - the render-side master gain.",
+      "Encoder side: MP4/MOV AAC 192k, WebM Opus 128k, mix written as PCM s16le 48 kHz stereo; `PRODUCER_ENABLE_STREAMING_ENCODE`, `PRODUCER_RESTRICT_PAGE_NETWORK` and `PRODUCER_NON_PUBLIC_CIDRS` gate network access for remote media during render.",
+      "Fonts: `@font-face` + project-local `.woff2`, or the bundled alias map; `failClosedFontFetch` makes unresolved fonts a typed error instead of a silent system-font fallback; `hyperframes-localize-fonts` bin rewrites Google Fonts to local files."
+    ]
+  },
+  "integration": {
+    "pipeline_fit": "Mostly irrelevant to the current core loop and highly relevant to the overlay layer. render_video.py already mixes voice + bed with FFmpeg to -14 LUFS / -1 dBTP and cuts on a measured beat grid from beat_grid.py; HyperFrames would not improve that. What it adds is (a) an in-HTML mix for compositions rendered by HyperFrames - carve ducking, per-clip lanes, a master true-peak - so an overlay render carries its own sound instead of needing a second FFmpeg pass, and (b) a measurement toolkit (`audio`, `beats`, `normalize-audio`) that can cross-check the Python beat grid and loudness targets. It does not replace FFmpeg for the beat-synced footage cut.",
+    "python_integration": "Three concrete integration shapes, all file- or process-based:\n\n1) Analysis only (zero risk):\n```python\nimport json, subprocess\nrep = json.loads(subprocess.run(\n    [\"npx\",\"hyperframes\",\"audio\",str(wav),\"--json\"],\n    capture_output=True, text=True, check=True).stdout)\nonsets = [o[\"time\"] for o in rep[\"onsets\"]]\n```\nUse it to verify beat_grid.py's phase against `beats` and to place SFX on real transients.\n\n2) Mix in the composition (recommended when HyperFrames renders the overlay): author `data-volume`/`data-fx-chain`/`data-fx-carve` from the same sku.json that drives the Python side, and let the render bake the mix; no audio file juggling. Put the master `truepeak` at -1.5 dBTP and let the CLI's `audio_lowered` warning tell you if it had to pull the whole mix.\n\n3) Post-check the rendered file: keep the existing `qa_check.py` LUFS/true-peak gate on `output/<sku>.mp4` - HyperFrames guarantees <= -1 dBTP, not your -14 LUFS integrated target, and it can only lower the whole mix flat (quiet passages included).\n\nCaveats: `audio` and `normalize-audio` reject remote or out-of-project sources, so pass local paths; the mix is a unity sum, so overlapping narration takes add up (doubling a voice = +6 dB) and nothing limits them unless you add a master `truepeak`; a bad `data-fx-chain` fails the whole render (`audio_processing_failed`) while preview plays dry, so gate with `lint` before spending the render.",
+    "data_injection": "Word timings and beat grids are the two data feeds. Word timings: write `transcript.json` (`[{text,start,end}]`) from your existing Whisper alignment, or run `hyperframes transcribe --to srt --json`; caption elements then take `data-start`/`data-duration` per word. Beat grid: `hyperframes beats` writes `beats/<audio>.json` (`{version, audio, beats:[{time,strength}]}`) which Studio loads as-is, so authoring and review share the same grid; a `data-beat=\"name\"` element is what `snapshot --review` uses to find beat frames. Per-video copy and asset paths go through `data-composition-variables` + `--variables` (types include `image`, so a per-SKU image path can be a variable). Volume and effect settings are plain JSON attributes, so a Jinja template can emit the mix directly from sku.json.",
+    "footage_and_asset_handling": "Existing MP4 cuts are placed with `data-media-start` = the in-point from edit_plan.json, `data-duration` = the shot length; nothing is re-encoded and the original file is the render source (FFmpeg pre-decodes, so HEVC/ProRes sources are fine even though Chrome cannot play them). Audio beds and voice MP3/WAV are used as-is by the FFmpeg mixer - no need to pre-convert to 48 kHz, mono or a specific codec; the mixer decodes, trims and re-encodes. Fonts must ship inside the project as `.woff2` with `@font-face` (the deterministic path; Google Fonts gets localized, system fonts alias under distributed rendering). Images and SVG work directly; HEIF is converted; large animated GIFs become video. Alpha footage (VP9/VP8 alpha WebM, ProRes 4444) keeps its alpha because it is extracted as PNG.",
+    "migration_effort": "medium",
+    "integration_steps": [
+      "Audit the current mix chain: confirm where -14 LUFS is enforced today (render_video.py) and keep it - HyperFrames will only guarantee the -1 dBTP ceiling.",
+      "Create the audio skeleton in the composition: one `<audio>` for the voiceover, one for the bed with `loop`, `data-fade-in/out`, `data-volume`, and a master `truepeak` at -1.5 dBTP on the root.",
+      "Add `data-fx-carve` to the bed naming a `voiceover` group instead of listing clip ids (the linter reports `audio_carve_ungrouped_sources` otherwise), and keep the bed out of that group.",
+      "Run `hyperframes audio --element '#music'` and `--element '#vo-01'` and compare the measured integrated loudness with the Python side; adjust `data-volume` until the voice sits ~4-6 dB over the bed, or let the carve do the work where they overlap.",
+      "Place SFX with `hyperframes audio <sfx> --json --place-at <t>` and use the reported steepest-rise/peak instants rather than the file start, so whooshes land on the transient.",
+      "Cross-check the beat grid: `hyperframes beats . --json` and diff its `beats[].time` against beat_grid.py's grid; keep whichever is measured from the same file, and note they can differ by a frame or two because Studio decodes in the browser at a different sample rate.",
+      "Only if the overlay render must carry sound: render the overlay to `--format webm` (VP9 + Opus, alpha) or MP4, then feed it into the FFmpeg composite as a second input instead of mixing the same voice twice."
+    ]
+  },
+  "constraints": {
+    "requirements": [
+      "FFmpeg and ffprobe on PATH for every audio/video operation (mix, extraction, probe, normalize, beats, remove-background); the CLI's `media-use doctor` fails only when ffmpeg, ffprobe or the bundled sound library is missing.",
+      "A Chromium build for anything that applies an FX chain at render time: the chain runs in an OfflineAudioContext inside the same headless browser used for frame capture.",
+      "Node.js >= 22 for the CLI and packages.",
+      "For alpha output, a composition that leaves `html`/`body` backgrounds unpainted - an opaque full-frame background is encoded as visible pixels.",
+      "For HEVC/ProRes/AV1 source playback in preview only: auto-proxying enabled (Chrome cannot decode them reliably); renders do not need it because FFmpeg pre-decodes.",
+      "For remote media: public HTTPS URLs reachable from the render host; for cloud rendering, media is offloaded to public unsigned HeyGen asset URLs under a 200 MB zip cap."
+    ],
+    "limitations": [
+      "No automatic loudness normalisation. The mix is a unity sum; overlapping tracks add and can pass 0 dBFS. The only guarantees are the -1 dBTP delivery ceiling and (if you add it) a `truepeak` on the master bus.",
+      "`limiter` is an envelope follower with no lookahead and can pass inter-sample peaks; use `truepeak` for delivery. Even `truepeak` holds its ceiling against a 4x estimate: measured up to 0.6 dB over on tones/noise/dense mixes and 1.2-1.7 dB over on full-band white noise driven 8+ dB into it. Leave ~2 dB of margin under a hard platform limit.",
+      "`data-track-index` is display-only: it neither orders paint nor isolates tracks, and two clips on the same track can overlap in time and both play.",
+      "Automation is only possible on parameters backed by a native `AudioParam`. Worklet effects (compressor, limiter, truepeak, gate, bitcrush, pitchshift) are not automatable at all; a lane on such a parameter is silently inert - automate a `gain` stage around the effect instead.",
+      "Two clocks: a lane on a clip counts from that clip's start, a lane on a group counts from composition time. Writing a group lane in clip-relative time is the most expensive documented mistake.",
+      "A `volume` lane multiplies `data-volume` and wins over a GSAP tween on `volume` (the tween is ignored; lint `audio_volume_double_automation`); a tween's values are absolute and replace `data-volume` (lint `audio_volume_tween_overrides_gain`).",
+      "`data-playback-start` vs `data-media-start` is a real split-brain: the timing compiler, HTML parser and audio mixer read only `data-media-start`, while the runtime, Studio and snapshot read `data-playback-start` first. A `<video>` authored with only `data-playback-start` renders a trimmed picture over untrimmed audio.",
+      "No static validation of an effect chain: an unknown effect type or a bad param only surfaces at render, and an unreadable master chain fails the whole mix under every strictness setting (preview plays dry).",
+      "Effects with a tail (`reverb`, `delay`) make the rendered track longer than its source, so a bed no longer ends exactly at `data-duration`.",
+      "Audio is mixed by film time from `data-start`/`data-duration`/`data-media-start`/rate - it is sample-accurate to that mapping but not sample-locked to a per-frame animation; sync precision is the timeline's, not the audio engine's.",
+      "Base64 audio/video is a lint error (`base64_media_prohibited`); `preload=\"none\"` blocks the renderer (`media_preload_none`); a self-closing `<video />` swallows every following element (`self_closing_media_tag`).",
+      "`crossorigin` on a media element forces a CORS-checked fetch: if the host omits CORS headers, preview shows blank media while the render still works (`media_crossorigin_breaks_preview`).",
+      "Preview needs Chrome-decodable codecs; HEVC/ProRes/AV1 fall back to a cached H.264 proxy, so what you see in preview is a proxy, not the source pixels.",
+      "At most 96 inputs per FFmpeg mix graph; larger mixes are summed in stages, so a very large composition costs extra intermediate WAVs.",
+      "`normalize-audio` refuses remote or out-of-project sources and caps the correction at +12 dB and -1.5 dBTP, reporting how far short it had to stop."
+    ],
+    "known_issues": [
+      "`hevc_preview_codec` (info): HEVC sources render fine but preview depends on the H.264 proxy; if preview is black, proxying was disabled or the source is not local.",
+      "`video_audio_double_source` (error): an `<audio>` and an unmuted `<video>` on the same source at the same time echo; let the video carry its own sound or mute it.",
+      "`video_media_start_at_or_eof` (warning): `data-media-start` at/past the source's playable duration holds the final frame for the whole slot.",
+      "`audio_group_no_members` (error) and `audio_group_holds_elements` (warning): a self-closed `<hf-audio-group />` swallows later siblings, so the bus silently has no members and the elements vanish while `data-hidden` is set.",
+      "`audio_attribute_unreadable` (error): a chain/lane that is not `{version:1, nodes|lanes:[...]}` fails the render; the linter catches only structure, never the effect type or parameter.",
+      "`texture_mask_asset_not_found` / `missing_stylesheet_asset`: a `url()` resolved from the stylesheet's own folder, not the document, so a font or mask 404s and falls back silently.",
+      "VP9 alpha verification trap: `ffprobe` reporting `pix_fmt=yuv420p` does not mean alpha was lost; select the alpha decoder before the input (`ffmpeg -c:v libvpx-vp9 -i overlay.webm -frames:v 1 -pix_fmt rgba out.png`) or check `ALPHA_MODE=1`.",
+      "`truepeak` adds latency equal to `lookahead` plus ~0.3 ms (3.3-10.3 ms); the offline render trims it but live preview plays it, so preview sound sits slightly behind picture."
+    ],
+    "performance_and_cost": "Documented facts, not measured here: the FX pass runs once per clip/group WAV in headless Chrome (OfflineAudioContext), so cost scales with number of processed tracks x duration, not with frame count; every source video frame is extracted before capture by default (~25 GB/min raw RGBA at 1080p30 if frames land on disk), and `HF_VIDEO_FRAME_WINDOW=true` bounds it per segment. `audio --read --quality best` uploads a 192 kb/s MP3 to HeyGen for 6-stem separation (30-minute default stems timeout). Analysis is local and free; `remove-background` peaks around 1.5 GB RAM with u2net. No published figures for mix time on a 28 s composition - measure on the target host.",
+    "licensing": "HyperFrames itself is Apache-2.0, and the audio graph, effects, presets and analysis are part of it. The content sources are mixed: bundled SFX library ships with the CLI (offline), Openverse SFX are CC0 or CC BY with credits written to `.media/audio/sfx/CREDITS.md`, theSVG/GitHub-avatar/favicon logos are fetched from public sources, and HeyGen music/voice/avatar catalogs plus stem separation are metered account features. `u2net_human_seg` is Apache-2.0 (~168 MB ONNX). The exact licences of the bundled SFX pack and of the Kokoro/Parakeet model weights are not stated in the docs."
+  },
+  "evidence": {
+    "confidence": 0.87,
+    "sources": [
+      "https://hyperframes.heygen.com/reference/audio-effects - the authoritative page for the four audio attributes, two clocks, +12 dB ceiling, unity summing, master bus, the 16-effect registry with every parameter range, automatable-parameter rules, 22 presets, 5 jobs, 5 profiles, carve semantics, groups/mute, preview-vs-render table and the four audio lint rules.",
+      "https://hyperframes.heygen.com/reference/html-schema - media attributes (data-media-start vs data-playback-start, data-playback-rate 0.1-10, data-volume, fades, data-has-audio), the muted/data-has-audio rule, nested composition variables, and the 'HyperFrames owns playback' contract.",
+      "https://hyperframes.heygen.com/guides/voice-and-audio - loop attribute semantics, music ducking, carve pointer, the free-vs-HeyGen split for voice/music/SFX/captions.",
+      "https://hyperframes.heygen.com/guides/rendering - output formats, ProRes profiles, input codec proxying (HEVC/ProRes/AV1), transparent-video caveats, VP9 alpha verification recipe, 4:4:4 measurements.",
+      "https://hyperframes.heygen.com/packages/cli - `audio`, `beats`, `transcribe`, `tts`, `normalize-audio`, `remove-background`, `media-treatment`, `media-use`, `capture --video`; LUFS method statement and the `--read` recording modes.",
+      "https://hyperframes.heygen.com/reference/lint-rules - media/audio/font rules: audio_attribute_unreadable, audio_carve_ungrouped_sources, audio_group_*, base64_media_prohibited, media_crossorigin_breaks_preview, media_src_kind_mismatch, self_closing_media_tag, hevc_preview_codec, video_* rules, font_family_without_font_face.",
+      "npm tarball engine-0.9.54.tgz dist/services/audioMixer.js - the actual FFmpeg graph: `atrim`, `volume` (eval=frame), `afade`, `adelay`, `amix=...:normalize=0`, `-ar 48000 -acodec pcm_s16le`, MAX_MIX_INPUTS=96, MIXED_AUDIO_FILENAME='audio.m4a', atempo for rate.",
+      "npm tarball engine-0.9.54.tgz dist/services/audioFxRender.d.ts - the OfflineAudioContext FX pass and why it is not reimplemented as FFmpeg filters.",
+      "npm tarball engine-0.9.54.tgz dist/services/videoFrameExtractor.js - ALPHA_CAPABLE_CODECS {vp9, vp8, prores}, SIDECAR_ALPHA_CODECS, resolveFrameFormat returning PNG for alpha sources.",
+      "npm tarball engine-0.9.54.tgz dist/services/chunkEncoder.js - `-c:a aac -b:a 192k` for mp4/mov, `-c:a libopus -b:a 128k` for webm, PRORES_PROFILES and ENCODER_PRESETS.",
+      "npm tarball core-0.9.54.tgz dist/audioGain.d.ts - MAX_AUDIO_GAIN_DB = 12, MAX_AUDIO_GAIN = 3.981; and audioLeveller.d.ts ('Even Out Levels' is windowed RMS, explicitly not LUFS).",
+      "npm tarball engine-0.9.54.tgz dist/services/fileServer.d.ts - the project is served over a loopback HTTP server to Chrome (no file:// origin), which is why relative paths work and CORS only matters for remote URLs.",
+      "https://hyperframes.heygen.com/guides/video-components and /guides/media - img/SVG/MP4/WebM/MOV import, copy assets into the project, cross-origin and expiring-URL failure modes."
+    ],
+    "open_questions": [
+      "Whether `loop` repeats sample-exactly at the boundary (no gap) for compressed sources - documented as 'repeats until the slot ends' but not measured; a spike should record the seam.",
+      "The bundled SFX library's licence and size, and the Kokoro/Parakeet weight licences - not stated in the docs I could fetch.",
+      "Whether the master bus chain is applied before or after the flat `audio_lowered` trim (the docs describe the truepeak at -3 dBTP then a flat lowering, but not the exact ordering with a user-authored master chain).",
+      "How a 44.1 kHz source is resampled into the 48 kHz mix (FFmpeg default swr settings) and whether that is audible on a phone speaker - unmeasured.",
+      "Whether `data-playback-rate` on audio produces pitch-shifted audio (atempo preserves pitch) or true varispeed; the mixer uses atempo, so pitch is preserved, but this is inferred from the filtergraph rather than documented.",
+      "Real cost of the per-clip OfflineAudioContext pass on a 28 s composition with 5 audio tracks - no published benchmark."
+    ]
+  },
+  "uncertain": [
+    "requirements",
+    "output_formats",
+    "performance_and_cost"
+  ]
+}
