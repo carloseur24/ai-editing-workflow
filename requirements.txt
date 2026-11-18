@@ -1,0 +1,14 @@
+# Core rendering
+numpy>=1.26,<3
+scipy>=1.11
+pillow>=10.0
+opencv-python-headless>=4.9
+
+# Word-level forced alignment (no torch required)
+faster-whisper>=1.0.3
+# PyAV 19 removed the metadata_errors kwarg faster-whisper still passes
+av>=11,<19
+
+# Tooling only: beat_grid.py measures the music tempo/phase once per track
+# (cached by file hash). Not imported by the renderer at encode time.
+librosa>=1.0
