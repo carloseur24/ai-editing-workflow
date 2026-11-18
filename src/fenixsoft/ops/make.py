@@ -28,9 +28,11 @@ from datetime import datetime
 from pathlib import Path
 
 from ..context import (DEFAULT_CONFIG, SFX_DIR, load_config, output_dir,
-                       repo_path, resolve_sku_dir)
+                       project_config_path, repo_path, resolve_sku_dir)
 from ..domain import runs
+from ..domain import shots as shots_mod
 from ..domain.config_slices import audio_changed, picture_changed
+from ..domain.voice import is_music_only, voice_name
 
 STAGES = {
     "storyboard": "fenixsoft.stages.storyboard",
@@ -41,6 +43,8 @@ STAGES = {
     "validate": "fenixsoft.stages.validate_plan",
     "sfx": "fenixsoft.stages.sfx",
     "render": "fenixsoft.render.render_video",
+    "motion": "fenixsoft.stages.motion",
+    "comp": "fenixsoft.stages.comp",
     "qa": "fenixsoft.gates.qa_check",
 }
 
@@ -125,7 +129,64 @@ def write_config_stamp(out: Path, cfg: dict, stage: str) -> None:
 
 def _voice(sku_dir: Path) -> Path:
     sku = json.loads((sku_dir / "sku.json").read_text(encoding="utf-8"))
-    return sku_dir / (sku.get("voiceover") or "voice.mp3")
+    return sku_dir / voice_name(sku)
+
+
+def _sku_doc(sku_dir: Path) -> dict:
+    try:
+        return json.loads((sku_dir / "sku.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def locked_plan_state(sku_dir: Path) -> tuple[bool, str]:
+    """``(keep, why)``: a locked plan is not re-planned unless the brief moved.
+
+    The brief is the lock source for planner output: ``story.shots`` is the only
+    thing allowed to change a locked cut list. A plan no planner stamped
+    (``shots.is_manual_plan``) is hand-locked and kept as-is; only ``--force``
+    replaces it.
+    """
+    plan_path = sku_dir / "edit_plan.json"
+    if not plan_path.exists():
+        return False, "edit_plan.json missing"
+    try:
+        plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False, "edit_plan.json unreadable"
+    if shots_mod.is_manual_plan(plan):
+        return True, "hand-locked plan (manual)"
+    if not plan.get("locked"):
+        return False, "not locked"
+    brief_path = sku_dir / "brief.json"
+    brief: dict = {}
+    if brief_path.exists():
+        try:
+            brief = json.loads(brief_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            brief = {}
+    shots = shots_mod.shots_from_brief(brief)
+    if shots is None:
+        return True, (f"locked plan kept ({plan.get('order_source') or 'manual'})")
+    if shots_mod.plan_cuts_match(plan, shots):
+        return True, "locked by brief.story.shots"
+    return False, "brief.story.shots changed"
+
+
+def locked_plan_needs_candidates(sku_dir: Path) -> bool:
+    """True when the plan still points at candidate IDs (frames must run)."""
+    try:
+        plan = json.loads((sku_dir / "edit_plan.json")
+                          .read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return True
+    if not plan.get("locked") and not shots_mod.is_manual_plan(plan):
+        return True
+    for cut in plan.get("cuts") or []:
+        if cut.get("candidate") or cut.get("in") is None \
+                or cut.get("dur") is None:
+            return True
+    return False
 
 
 def _align_current(sku_dir: Path) -> bool | None:
@@ -196,6 +257,16 @@ def _should_run(name: str, sku_dir: Path, cfg: dict, force: bool,
     }
     if name == "storyboard" and not (sku_dir / "brief.json").exists():
         return False, "no brief.json (not an edit project)"
+    if name == "plan" and not force:
+        keep, why = locked_plan_state(sku_dir)
+        if keep:
+            return False, why
+    if name == "frames" and not force:
+        keep, _ = locked_plan_state(sku_dir)
+        if keep and not locked_plan_needs_candidates(sku_dir):
+            return False, "locked plan has explicit in/dur"
+    if name == "align" and is_music_only(_sku_doc(sku_dir)):
+        return False, "music-only project: no voiceover to align"
     if name == "align" and not force:
         current = _align_current(sku_dir)
         if current is True:
@@ -216,6 +287,10 @@ def _should_run(name: str, sku_dir: Path, cfg: dict, force: bool,
     if state is False:
         keys = ", ".join(CONFIG_DEPS.get(name, []))
         return True, f"config changed ({keys})"
+    if state is None:
+        overlay = project_config_path(sku_dir)
+        if overlay.exists() and _mtime(overlay) > _mtime(output):
+            return True, "project config newer than artifact (no stamp yet)"
     newest = max(inputs, key=_mtime).name if inputs else "inputs"
     return False, f"{output.name} is newer than {newest}"
 
@@ -268,8 +343,14 @@ def _render_freshness(sku_dir: Path, cfg: dict,
     # Legacy runs have no slice fingerprint: fall back to the config mtime.
     if picture_cfg is None:
         picture.append(config_path)
+        overlay = project_config_path(sku_dir)
+        if overlay.exists():
+            picture.append(overlay)
     if audio_cfg is None:
         audio.append(config_path)
+        overlay = project_config_path(sku_dir)
+        if overlay.exists():
+            audio.append(overlay)
 
     stale_picture = [p.name for p in picture if _mtime(p) > run_ts]
     stale_audio = [p.name for p in audio if _mtime(p) > run_ts]
@@ -285,6 +366,129 @@ def _render_freshness(sku_dir: Path, cfg: dict,
 
 
 STAGE_ORDER = ["storyboard", "beats", "frames", "align", "plan", "validate", "sfx"]
+
+
+def _motion_decision(sku_dir: Path) -> tuple[bool, str]:
+    """Run the motion plate when ``motion.json`` is newer than the newest plate."""
+    spec = sku_dir / "motion.json"
+    if not spec.exists():
+        return False, "no motion.json"
+    plate = runs.resolve_stable_ref("@motion/latest", sku_dir.name)
+    if plate and _mtime(Path(plate)) >= _mtime(spec):
+        return False, f"plate newer than motion.json ({Path(plate).name})"
+    return True, "motion.json changed or no plate"
+
+
+def post_decisions(sku_dir: Path, cfg: dict,
+                   config_path: Path = DEFAULT_CONFIG, *,
+                   deliver: bool = True) -> list[dict]:
+    """Decisions for ``make --post comp``, including the delivery row.
+
+    The dry-run and the execution print the *same* list, so the plan cannot
+    claim a comp delivery that ``run_post_comp`` will not perform. With
+    ``post.comp = false`` there is no post master: motion, comp, post QA and
+    delivery are all SKIP, and the reason names the edit-delivery path instead.
+    """
+    motion_run, motion_why = _motion_decision(sku_dir)
+    post_cfg = cfg.get("post") or {}
+    motion_on = bool(post_cfg.get("motion", True))
+    comp_on = bool(post_cfg.get("comp", True))
+    reasons = []
+    if not motion_on:
+        reasons.append("post.motion = false (project config)")
+    if not comp_on:
+        reasons.append("post.comp = false (the edit master is the product)")
+    if reasons:
+        motion_run, motion_why = False, "; ".join(reasons)
+    if comp_on:
+        deliver_row = {
+            "stage": "deliver", "run": deliver,
+            "why": ("comp master -> delivery shelf (only after post QA)"
+                    if deliver else "delivery disabled by --no-finish"),
+        }
+    else:
+        deliver_row = {
+            "stage": "deliver", "run": False,
+            "why": ("edit master is the product; use `fenix make` / "
+                    "`fenix finish` for the edit delivery"),
+        }
+    return [
+        {"stage": "motion", "run": motion_run, "why": motion_why},
+        {"stage": "comp", "run": comp_on,
+         "why": ("--reuse: copies the newest comp when spec + inputs match, "
+                 "else renders") if comp_on else
+                "post.comp = false: the edit master is the product"},
+        {"stage": "post qa", "run": comp_on,
+         "why": "post-master profile (container, duration, audio, black "
+                "frames, size, cut identity)" if comp_on else
+                "no post master to QA"},
+        deliver_row,
+    ]
+
+
+# The earlier name stays as an alias for callers/tests written against it.
+post_plan = post_decisions
+
+
+def run_post_comp(sku_dir: Path, cfg: dict,
+                  config_path: Path = DEFAULT_CONFIG,
+                  deliver_result: bool = True) -> bool:
+    """Motion (if stale) -> comp --reuse -> post QA -> deliver the comp master.
+
+    The edit run is never finished here: it is the base the comp reads, and
+    pruning it would break the composite. Edit strict QA already ran, so a comp
+    master cannot bypass it. A project can opt out with ``post.motion`` /
+    ``post.comp``; with comp off the edit master stays the product.
+    """
+    post_cfg = cfg.get("post") or {}
+    post_motion = bool(post_cfg.get("motion", True))
+    post_comp = bool(post_cfg.get("comp", True))
+    if not post_comp:
+        print("[make] post  comp SKIP  post.comp = false "
+              "(the edit master is the product)")
+        print(f"[make] post  deliver SKIP  edit master is the product; use "
+              f"`fenix make {sku_dir.name}` / `fenix finish {sku_dir.name}` "
+              f"for the edit delivery")
+        return True
+    motion_run, motion_why = _motion_decision(sku_dir)
+    if motion_run and post_motion:
+        if not _step("motion", [str(sku_dir)]):
+            return False
+    else:
+        print(f"[make] post  motion SKIP  "
+              f"{motion_why if post_motion else 'post.motion = false'}")
+    if not _step("comp", [str(sku_dir), "--reuse"]):
+        return False
+    comp_video = runs.resolve_stable_ref("@comp/latest", sku_dir.name)
+    if not comp_video:
+        print("[make] post  comp produced no comp.mp4")
+        return False
+    comp_video = Path(comp_video)
+    if not _step("qa", ["--post", str(comp_video.parent), "--strict"]):
+        print("[make] post QA failed; the comp master was NOT delivered")
+        return False
+    if deliver_result:
+        from ..stages import comp as comp_stage
+        print(f"[make] run   post deliver {comp_video.parent.name}")
+        comp_stage.deliver_run(comp_video.parent, comp_video, cfg)
+    return True
+
+
+def stage_argv(name: str, sku_dir: Path, force: bool = False,
+               config_path: Path | None = None) -> list[str]:
+    """Arguments for a stage run from the chain (``--force`` is explicit)."""
+    argv = [str(sku_dir)]
+    if name == "plan" and force:
+        # plan keeps a locked/hand-authored cut list unless it is told to
+        # replace it; `make --force` must say so, not only force the decision.
+        argv.append("--force")
+    if (config_path is not None
+            and Path(config_path) != DEFAULT_CONFIG):
+        # The chain evaluated freshness against this base; the stages must read
+        # the same base or a project overlay would be judged by one config and
+        # rendered with another.
+        argv.extend(["--config", str(config_path)])
+    return argv
 
 
 def stage_decision(name: str, sku_dir: Path, cfg: dict, force: bool = False,
@@ -325,11 +529,19 @@ def main(argv: list[str] | None = None) -> int:
                         help="skip the QA gate (delivery will be refused)")
     parser.add_argument("--draft", action="store_true",
                         help="faster encode for review (not a delivery master)")
+    parser.add_argument("--post", choices=["comp"], default=None,
+                        help="after strict edit QA: motion (if stale) -> comp "
+                             "--reuse -> post-master QA -> deliver the comp")
     args = parser.parse_args(argv)
 
-    cfg = load_config(args.config)
     sku_dir = resolve_sku_dir(args.project)
+    cfg = load_config(args.config, project=sku_dir)
     print(f"[make] {sku_dir.name}")
+    overlay = project_config_path(sku_dir)
+    if overlay.exists():
+        from ..context import count_overrides, display_path, project_overrides
+        print(f"[make] config {display_path(overlay)} "
+              f"({count_overrides(project_overrides(sku_dir))} overrides)")
 
     todo: list[str] = []
     order = ["storyboard", "beats", "frames", "align", "plan", "validate", "sfx"]
@@ -349,12 +561,19 @@ def main(argv: list[str] | None = None) -> int:
     print(f"[make]       {'render':10} {render_mode.upper():5}  "
           f"{'; '.join(render_why[:3])}")
 
+    if args.post:
+        for row in post_decisions(sku_dir, cfg, args.config,
+                                  deliver=not args.no_finish):
+            print(f"[make] post  {row['stage']:10} "
+                  f"{'RUN ' if row['run'] else 'SKIP'}  {row['why']}")
+
     if args.dry_run:
         return 0
 
     started = time.monotonic()
     for name in todo:
-        if not _step(name, [str(sku_dir)]):
+        if not _step(name, stage_argv(name, sku_dir, args.force,
+                                      args.config)):
             return 1
         write_config_stamp(output_dir(sku_dir), cfg, name)
 
@@ -388,12 +607,19 @@ def main(argv: list[str] | None = None) -> int:
     if not render_ran:
         latest = runs.latest_run(sku_dir.name) or {}
         from .finish import qa_is_current
-        if qa_is_current(Path(latest.get("video") or "")):
+        if qa_is_current(Path(latest.get("video") or ""), cfg):
             print("[make]       qa         SKIP  strict PASS current")
         elif not _step("qa", ["--latest", sku_dir.name, "--strict"]):
             return 1
     elif not _step("qa", ["--latest", sku_dir.name, "--strict"]):
         return 1
+
+    if args.post:
+        if not run_post_comp(sku_dir, cfg, args.config,
+                             deliver_result=not args.no_finish):
+            return 1
+        print(f"[make] done  {time.monotonic() - started:.0f}s")
+        return 0
 
     if not args.no_finish and not args.draft:
         print(f"[make] run   finish {sku_dir.name}")
