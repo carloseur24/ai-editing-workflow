@@ -125,6 +125,7 @@ def main(argv: list[str] | None = None) -> None:
     args = ap.parse_args(argv)
 
     sku_dir = resolve_sku_dir(args.sku_dir)
+    cfg = load_config(args.config, project=sku_dir)
     clips = sorted((sku_dir / "clips").glob("*.mp4"))
     if not clips:
         sys.exit(f"[ERROR] No .mp4 clips in {sku_dir / 'clips'}")
@@ -184,7 +185,6 @@ def main(argv: list[str] | None = None) -> None:
 
     # ---- scored candidate manifest (the IDs the agent is allowed to pick)
     if not args.no_candidates:
-        cfg = load_config(args.config)
         cand = build_candidates(clips, cfg, step=args.candidates_step)
         cand_path = sku_dir / "candidates.json"
         cand_path.write_text(json.dumps(cand, ensure_ascii=False, indent=2),
