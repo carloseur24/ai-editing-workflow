@@ -22,6 +22,7 @@ bed), `stages`, `render` and `next` are computed from the files.
 | File / folder | Class | Written by | Purpose |
 |---|---|---|---|
 | `brief.json` | source | human / agent | format, duration, story, assets, deliverables; see [specs](../docs/reference/specs.md) |
+| `config.json` | source | human / agent | optional sparse pipeline overlay: only this piece's duration, cuts, beat policy, safe zones, audio or `post` flags; see [config](../docs/reference/config.md#project-overlay-inputprojectconfigjson) |
 | `sku.json` | source | human / agent | title, price, badges, footer, script, voice filename |
 | `picks.json` | source | human / agent | optional clip/candidate choice per narration line |
 | `motion.json`, `comp.json`, `fx.json`, `grade.json`, `track.json`, `longform.json`, `tts.json` | source | human / agent | optional post/motion spec for that mode |
@@ -46,6 +47,7 @@ regenerated or sourced locally.
 | a script only | `sku.json → script_text` | `fenix lint`, then `fenix tts` |
 | a music bed | `assets/music/` (not here) | `fenix beats`, `fenix sfx` |
 | SFX samples | `assets/sfx/` or your `sfx.library_dir` | `fenix sfx` |
+| a pipeline value true only for this piece | `input/<project>/config.json` | `fenix job` shows it; `make` hashes it |
 | fonts / motion textures | already in `assets/` | `render`, `motion` |
 
 Repo-wide assets are documented once in [assets/README.md](../assets/README.md).
