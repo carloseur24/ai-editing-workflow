@@ -1,0 +1,40 @@
+{
+  "target_duration_sec": 33.0,
+  "cuts_per_video": 5,
+  "quality": {
+    "in_point_floor": 0.25,
+    "beat_policy": "picture",
+    "max_duration_sec": 33.5
+  },
+  "music": {
+    "file": "assets/music/groove_120bpm.wav",
+    "bpm": 120
+  },
+  "audio": {
+    "music_bed_lufs": -18.0,
+    "music_fade_out_sec": 2.2,
+    "music_only": null
+  },
+  "voiceover": {
+    "tail_pad_sec": 11.176
+  },
+  "transitions": {
+    "enabled": true,
+    "default": "dissolve",
+    "sec": 0.2
+  },
+  "safe_zones": {
+    "reels_universal": {
+      "badge_y": -500,
+      "price_y": -400
+    },
+    "status_story": {
+      "badge_y": -500,
+      "price_y": -400
+    }
+  },
+  "post": {
+    "motion": false,
+    "comp": false
+  }
+}
