@@ -1,0 +1,28 @@
+{
+  "sku": "demo_iphone14_blue",
+  "run": "demo_iphone14_blue_20261115-185938",
+  "video": "output/demo_iphone14_blue/demo_iphone14_blue_20261115-185938/demo_iphone14_blue_20261115-185938_final.mp4",
+  "created_at": "2026-11-15T19:05:19",
+  "metrics": {
+    "duration_sec": 28.023,
+    "cuts": 16,
+    "size_mb": 13.535,
+    "in_point_min_ratio": 0.932,
+    "in_point_mean_ratio": 1.628,
+    "beat_max_offset_ms": 0.5,
+    "beat_mean_offset_ms": 0.2,
+    "caption_max_cps": 28.4,
+    "caption_mean_cps": 19.19,
+    "lufs": -14.34,
+    "true_peak_db": -1.32,
+    "warnings": 0,
+    "qa_errors": 0,
+    "qa_warnings": 0,
+    "qa_pass": true,
+    "window_min_ratio": 0.957,
+    "window_mean_ratio": 1.423,
+    "window_soft_frac": 0.009,
+    "clip_identity_mismatches": 0,
+    "ssim_vs_baseline": 0.835587
+  }
+}
