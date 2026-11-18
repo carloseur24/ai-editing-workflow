@@ -870,6 +870,22 @@ def render_music_bed(cfg: dict, cues: list[dict], duration: float,
 
 
 # ------------------------------------------------------------------- checks
+def cue_floor(duration: float, configured: int = 8) -> int:
+    """Minimum foreground cues for a piece of ``duration`` seconds.
+
+    The blueprint's 8 cues assume a ~28 s edit; a 6 s cut cannot carry eight
+    motivated transients without turning into noise. The floor is therefore
+    ``ceil(duration / 2)`` capped by ``sfx.min_cues`` (default 8).
+    """
+    try:
+        span = float(duration)
+    except (TypeError, ValueError):
+        span = 0.0
+    per_second = max(1, math.ceil(span / 2.0))
+    cap = max(1, int(configured or 8))
+    return max(1, min(cap, per_second))
+
+
 def evaluate(cues: list[dict], bus_peak_db: float, bed_lufs: float,
              policy: dict) -> list[dict]:
     rows: list[dict] = []
@@ -882,8 +898,12 @@ def evaluate(cues: list[dict], bus_peak_db: float, bed_lufs: float,
 
     foreground = [c for c in cues if c["layer"] != "env"]
     layers = {c["layer"] for c in foreground}
-    check("sd_cues", len(foreground) >= 8, f"{len(foreground)} foreground cues",
-          ">= 8", "error", "run `fenix sfx <project>` after the edit plan is locked")
+    floor = cue_floor(float(policy.get("duration_sec", 0) or 0),
+                      int(policy.get("min_cues", 8)))
+    check("sd_cues", len(foreground) >= floor,
+          f"{len(foreground)} foreground cues",
+          f">= {floor} (duration-scaled, cap {int(policy.get('min_cues', 8))})",
+          "error", "run `fenix sfx <project>` after the edit plan is locked")
     check("sd_layers", {"anticipation", "tactile", "impact"}.issubset(layers),
           ", ".join(sorted(layers)) or "none", "anticipation + tactile + impact",
           "error", "add the missing layer in `stages/sfx.py`")
@@ -963,6 +983,7 @@ def build(sku_dir: Path, cfg: dict, library_dir: Path | None = None,
         "sub_spacing_sec": float(sfx_cfg.get("sub_spacing_sec", 1.5)),
         "music_bed_lufs": float((cfg.get("audio") or {}).get("music_bed_lufs", -28.0)),
         "duration_sec": duration,
+        "min_cues": int(sfx_cfg.get("min_cues", 8)),
     }
     cues = plan_cues(cuts, words, duration, music_label,
                      policy["music_bed_lufs"], policy)
@@ -1033,6 +1054,7 @@ def build(sku_dir: Path, cfg: dict, library_dir: Path | None = None,
             "vacuum_ms": policy["vacuum_ms"],
             "jcut_min_ms": policy["jcut_min_ms"],
             "sub_spacing_sec": policy["sub_spacing_sec"],
+            "min_cues": policy.get("min_cues", 8),
             "bus_peak_db": float(sfx_cfg.get("bus_peak_db", -3.0)),
         },
         "summary": summary,
@@ -1087,7 +1109,8 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
 
-    cfg = load_config(args.config)
+    cfg = load_config(args.config, project=(resolve_sku_dir(args.sku_dir)
+                                            if args.sku_dir else None))
     sfx_cfg = cfg.get("sfx") or {}
     library = repo_path(args.library
                         or sfx_cfg.get("library_dir") or SFX_DIR).expanduser()
