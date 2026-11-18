@@ -20,9 +20,14 @@ import json
 import sys
 from pathlib import Path
 
-from ..context import (DEFAULT_CONFIG, REPO_ROOT, SFX_DIR, display_path,
-                       load_config, output_dir, repo_path, resolve_sku_dir)
+from ..context import (DEFAULT_CONFIG, REPO_ROOT, SFX_DIR, count_overrides,
+                       display_path, load_config, output_dir,
+                       project_config_path, project_overrides, repo_path,
+                       resolve_sku_dir)
 from ..domain import runs
+from ..domain import shots as shots_mod
+from ..domain.quality import probe_duration
+from ..domain.voice import explicit_duration, is_music_only, voice_name
 from . import make
 
 # The global skill registry used by the OpenCode harness. A project-local
@@ -129,15 +134,32 @@ def _missing_inputs(sku_dir: Path, mode: str, cfg: dict
 
     if mode in ("edit", "hybrid"):
         sku_path = sku_dir / "sku.json"
+        brief: dict = {}
+        if (sku_dir / "brief.json").exists():
+            try:
+                brief = json.loads((sku_dir / "brief.json")
+                                   .read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                brief = {}
         if not sku_path.exists():
             missing.append("sku.json")
         else:
             sku = json.loads(sku_path.read_text(encoding="utf-8"))
-            voice = sku.get("voiceover") or "voice.mp3"
-            if not (sku_dir / voice).exists():
-                missing.append(voice)
-            if not (sku.get("script_text") or "").strip():
-                warnings.append("no script_text: captions and planning degrade")
+            if is_music_only(sku):
+                warnings.append(
+                    "music-only: captions disabled; cuts come from "
+                    "brief.story.shots, not narration lines")
+                if not (sku.get("duration_sec") or brief.get("duration_sec")):
+                    warnings.append(
+                        "music-only: no explicit duration_sec; using "
+                        f"config target_duration_sec "
+                        f"({cfg.get('target_duration_sec')}s)")
+            else:
+                voice = voice_name(sku)
+                if not (sku_dir / voice).exists():
+                    missing.append(voice)
+                if not (sku.get("script_text") or "").strip():
+                    warnings.append("no script_text: captions and planning degrade")
         if not clips:
             missing.append("clips/*.mp4")
         if not (sku_dir / "brief.json").exists():
@@ -165,6 +187,104 @@ def _missing_inputs(sku_dir: Path, mode: str, cfg: dict
     return missing, warnings, asset_gaps
 
 
+def _read_json(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def order_block(sku_dir: Path, cfg: dict) -> dict:
+    """The ordered shot table + lock state, for the card and ``--json``."""
+    brief = _read_json(sku_dir / "brief.json")
+    plan = _read_json(sku_dir / "edit_plan.json")
+    sku = _read_json(sku_dir / "sku.json")
+    shots = shots_mod.shots_from_brief(brief)
+    durations: dict[str, float] | None = None
+    duration = explicit_duration(sku, brief, cfg)
+    if shots:
+        durations = {}
+        for name in sorted({s["clip"] for s in shots if s.get("clip")}):
+            path = sku_dir / "clips" / name
+            if path.exists():
+                durations[name] = probe_duration(path)
+    sh_cfg = {**shots_mod.DEFAULTS, **(cfg.get("shots") or {})}
+    state = shots_mod.order_state(
+        brief, plan, durations, duration,
+        min_dur=float(cfg.get("min_cut_sec", 1.2) or 0.0),
+        source_tolerance=float(sh_cfg["source_tolerance_sec"]),
+        sum_tolerance=float(sh_cfg["sum_tolerance_sec"]))
+    cuts = plan.get("cuts") or []
+    if shots_mod.is_manual_plan(plan):
+        # A hand-authored plan outranks a shot table: it is the delivered order
+        # until the user runs `fenix plan --force`.
+        state.update({
+            "locked": True,
+            "manual": True,
+            "source": "plan",
+            "plan_cuts": len(cuts),
+            "total_sec": round(sum(float(c.get("dur") or 0)
+                                   for c in cuts), 3),
+            "order_confirmed": bool(cuts),
+            "checks": [],
+            "cuts": [{k: c.get(k) for k in ("clip", "in", "dur", "text")}
+                     for c in cuts],
+        })
+        return state
+    if not shots:
+        locked = bool(plan.get("locked")) and bool(cuts)
+        state.update({
+            "locked": bool(plan.get("locked")),
+            "manual": False,
+            "source": "plan" if cuts else None,
+            "plan_cuts": len(cuts),
+            "total_sec": round(sum(float(c.get("dur") or 0)
+                                   for c in cuts), 3),
+            "order_confirmed": bool(locked and cuts),
+            "cuts": [{k: c.get(k) for k in ("clip", "in", "dur", "text")}
+                     for c in cuts],
+        })
+    else:
+        state["cuts"] = [{k: c.get(k) for k in ("clip", "in", "dur", "text")}
+                         for c in cuts]
+        state["plan_locked"] = bool(plan.get("locked"))
+    return state
+
+
+def config_values(sku_dir: Path, cfg: dict) -> dict:
+    """The effective project values an agent must not guess (``job`` params)."""
+    quality = cfg.get("quality") or {}
+    transitions = cfg.get("transitions") or {}
+    sku = _read_json(sku_dir / "sku.json")
+    authored = sku.get("text_cards") or []
+    derived_path = output_dir(sku_dir) / "text_cards.json"
+    if authored:
+        text = f"native sku.text_cards ({len(authored)} cards)"
+    elif derived_path.exists():
+        try:
+            cards = json.loads(derived_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            cards = []
+        text = f"derived text_cards.json ({len(cards)} cards)"
+    elif (sku_dir / "motion.json").exists():
+        text = "motion plate (motion.json)"
+    else:
+        text = "captions only"
+    transition = ("off" if not transitions.get("enabled") else
+                  f"{transitions.get('default') or 'dissolve'} "
+                  f"{float(transitions.get('sec') or 0):.2f}s")
+    return {
+        "duration_sec": cfg.get("target_duration_sec"),
+        "cuts": cfg.get("cuts_per_video"),
+        "beat_policy": quality.get("beat_policy") or "music",
+        "in_point_floor": quality.get("in_point_floor"),
+        "transitions": transition,
+        "text": text,
+    }
+
+
 def _skill_installed(name: str) -> bool:
     return any((d / name / "SKILL.md").exists() for d in SKILL_DIRS)
 
@@ -175,11 +295,11 @@ def _skills(mode: str) -> list[dict]:
 
 
 def build_card(project: str, config_path: Path = DEFAULT_CONFIG) -> dict:
-    cfg = load_config(config_path)
     try:
         sku_dir = resolve_sku_dir(project)
     except SystemExit:
         sku_dir = None
+    cfg = load_config(config_path, project=sku_dir)
 
     if sku_dir is None:
         name = Path(project).name
@@ -191,9 +311,13 @@ def build_card(project: str, config_path: Path = DEFAULT_CONFIG) -> dict:
             "missing": cards_skus,
             "asset_gaps": [],
             "warnings": [],
+            "config": {"path": None, "exists": False, "overrides": 0},
+            "params": {},
             "skills": _skills("new"),
             "stages": [],
             "render": {"mode": "none", "why": ["no project folder"]},
+            "order": {"locked": False, "shots": [], "cuts": [],
+                      "order_confirmed": False},
             "next": [{"label": "intake",
                       "command": f"./fenix storyboard {name} --questions",
                       "reason": "create the folder and record the brief "
@@ -206,6 +330,7 @@ def build_card(project: str, config_path: Path = DEFAULT_CONFIG) -> dict:
     mode = detect_mode(sku_dir)
     missing, warnings, asset_gaps = _missing_inputs(sku_dir, mode, cfg)
     skills = _skills(mode)
+    order = order_block(sku_dir, cfg)
 
     stages: list[dict] = []
     render = {"mode": "none", "why": ["not an edit project"]}
@@ -257,6 +382,12 @@ def build_card(project: str, config_path: Path = DEFAULT_CONFIG) -> dict:
 
     if not blocked and mode in ("edit", "hybrid"):
         stale = [s["name"] for s in stages if s["run"]]
+        if order.get("shots") and not order.get("order_confirmed"):
+            next_actions.append({
+                "label": "relock order",
+                "command": f"./fenix plan {sku_dir.name}",
+                "reason": "edit_plan.json does not match brief.story.shots",
+            })
         if render["mode"] == "skip" and not stale:
             next_actions.append({
                 "label": "no-op",
@@ -302,9 +433,16 @@ def build_card(project: str, config_path: Path = DEFAULT_CONFIG) -> dict:
         "missing": missing,
         "asset_gaps": asset_gaps,
         "warnings": warnings,
+        "config": {
+            "path": display_path(project_config_path(sku_dir)),
+            "exists": project_config_path(sku_dir).exists(),
+            "overrides": count_overrides(project_overrides(sku_dir)),
+        },
+        "params": config_values(sku_dir, cfg),
         "skills": skills,
         "stages": stages,
         "render": render,
+        "order": order,
         "master": master,
         "next": next_actions,
         "gates": GATES.get(mode, []),
@@ -323,6 +461,19 @@ def _print_human(card: dict) -> None:
         print(f"  missing   {', '.join(card['missing'])}")
     if card.get("asset_gaps"):
         print(f"  assets    {', '.join(card['asset_gaps'])}")
+    config = card.get("config") or {}
+    if config.get("path"):
+        state = (f"({config['overrides']} overrides)"
+                 if config.get("exists") else "(none; global + local defaults)")
+        print(f"  config    {config['path']} {state}")
+    params = card.get("params") or {}
+    if params:
+        print(f"  params    {params.get('duration_sec')}s · "
+              f"{params.get('cuts')} cuts · "
+              f"beat {params.get('beat_policy')} · "
+              f"in-point floor {params.get('in_point_floor')} · "
+              f"transitions {params.get('transitions')} · "
+              f"text {params.get('text')}")
     for warning in card["warnings"]:
         print(f"  warning   {warning}")
     if card["skills"]:
@@ -337,6 +488,32 @@ def _print_human(card: dict) -> None:
         print(f"  stages    {state}")
         print(f"  render    {card['render']['mode']}  "
               f"{'; '.join(card['render']['why'][:3])}")
+    order = card.get("order") or {}
+    rows = ((order.get("cuts") if order.get("manual") else order.get("shots"))
+            or order.get("cuts") or [])
+    if rows:
+        if order.get("manual"):
+            lock = "locked plan (manual)"
+        elif order.get("shots"):
+            lock = "locked by brief" if order.get("locked") else "brief FAILS"
+        elif order.get("locked"):
+            lock = "locked plan"
+        else:
+            lock = "plan (not locked)"
+        confirmed = "confirmed" if order.get("order_confirmed") else "NOT confirmed"
+        print(f"  order     {len(rows)} shots · {order.get('total_sec', 0):.2f}s "
+              f"· {lock} · {confirmed}")
+        for i, shot in enumerate(rows[:8]):
+            label = shot.get("text") or shot.get("label") or ""
+            print(f"            {i:>2} {str(shot.get('clip'))[:34]:<34} "
+                  f"in {float(shot.get('in') or 0):6.2f}  "
+                  f"dur {float(shot.get('dur') or 0):5.2f}  "
+                  f"{str(label)[:26]}")
+        if len(rows) > 8:
+            print(f"            ... {len(rows) - 8} more")
+        for check in order.get("checks") or []:
+            if not check.get("pass"):
+                print(f"            FAIL {check['id']}: {check['fix']}")
     for action in card["next"]:
         print(f"  next      {action['command']}  # {action['reason']}")
     print("  gates     " + " -> ".join(card["gates"]))
