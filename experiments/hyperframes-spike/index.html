@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=1080, height=1920" />
+<script src="./assets/vendor/gsap.min.js"></script>
+<style>
+  @font-face {
+    font-family: "Inter Black";
+    src: url("./assets/Inter-Black.ttf") format("truetype");
+    font-weight: 900; font-style: normal;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { width:1080px; height:1920px; background:transparent; overflow:hidden; }
+  #root { position:relative; width:1080px; height:1920px; background:transparent;
+           font-family:"Inter Black", Inter, "DejaVu Sans", sans-serif; }
+  .clip { position:absolute; }
+  /* header zone y=110..318 (current locked spec) */
+  #header { left:65px; top:110px; width:950px; display:flex; flex-direction:column; gap:12px; }
+  #title { font-size:56px; line-height:1; letter-spacing:-1px; color:#fff;
+            text-shadow:0 2px 6px rgba(0,0,0,.75), 0 0 2px rgba(0,0,0,.55); }
+  #subtitle { font-size:34px; line-height:1; color:#cfe9e1;
+               text-shadow:0 2px 6px rgba(0,0,0,.75); }
+  #badges { display:flex; gap:16px; }
+  .badge { display:flex; align-items:center; gap:8px; font-size:28px; color:#d1fae5;
+            text-shadow:0 2px 6px rgba(0,0,0,.75); }
+  /* caption band y=1305..1455 */
+  #captions { left:65px; top:1305px; width:885px; height:150px; }
+  .card { position:absolute; inset:0; font-size:46px; line-height:1.06; letter-spacing:-0.5px;
+           text-transform:uppercase; color:#fff; opacity:0;
+           text-shadow:0 2px 6px rgba(0,0,0,.8), 0 0 2px rgba(0,0,0,.6); }
+  .word { display:inline-block; will-change:transform, opacity; }
+  /* pill y=1470, footer y=1584 */
+  #pill { left:65px; top:1470px; padding:16px 34px; border-radius:999px;
+           background:#059669; color:#04231a; font-size:62px; line-height:1; white-space:nowrap; }
+  #foot { left:65px; top:1584px; font-size:30px; color:#e6fff5; opacity:.92;
+           text-shadow:0 2px 5px rgba(0,0,0,.8); }
+</style>
+</head>
+<body>
+<div id="root" data-composition-id="hfspike" data-start="0" data-duration="3.0"
+     data-width="1080" data-height="1920" data-fps="60">
+  <div id="header" class="clip" data-start="0" data-duration="3.0">
+    <div id="title">iPhone 14 • 128GB</div>
+    <div id="subtitle">Azul • eSIM • 77% Batería</div>
+    <div id="badges"><div class="badge"><svg viewBox="0 0 24 24" width="34" height="34"><path d="M20 6L9 17l-5-5" fill="none" stroke="#059669" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Forro Incluido</div><div class="badge"><svg viewBox="0 0 24 24" width="34" height="34"><path d="M20 6L9 17l-5-5" fill="none" stroke="#059669" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Garantía 1 Mes</div></div>
+  </div>
+  <div id="captions" class="clip" data-start="0" data-duration="3.0"></div>
+  <div id="pill" class="clip" data-start="0" data-duration="3.0">$330 USDT</div>
+  <div id="foot" class="clip" data-start="0" data-duration="3.0">@fenixsoft • Mercado Social Local C-29</div>
+</div>
+<script>
+const CARDS = [{"text": "UN IPHONE 14", "t0": 0.0, "t1": 0.763}, {"text": "POR 330 DÓLARES", "t0": 0.763, "t1": 2.034}, {"text": "EN MARACAY", "t0": 2.034, "t1": 2.717}, {"text": "TE MUESTRO EXACTAMENTE", "t0": 2.717, "t1": 3.0}];
+const tl = gsap.timeline({ paused: true });
+const host = document.getElementById("captions");
+
+CARDS.forEach((c, i) => {
+  const card = document.createElement("div");
+  card.className = "card";
+  card.id = "card" + i;
+  const words = c.text.split(/\s+/).filter(Boolean);
+  const span = Math.max(0.2, c.t1 - c.t0);
+  const step = Math.min(0.09, Math.max(0.03, (span - 0.32) / Math.max(1, words.length)));
+  words.forEach((w) => {
+    const s = document.createElement("span");
+    s.className = "word";
+    s.textContent = w;
+    card.appendChild(s);
+    card.appendChild(document.createTextNode(" "));
+  });
+  host.appendChild(card);
+  tl.set(card, { opacity: 1 }, c.t0);
+  tl.fromTo(card.querySelectorAll(".word"),
+    { y: 30, opacity: 0, rotateX: -35 },
+    { y: 0, opacity: 1, rotateX: 0, duration: 0.16, stagger: step, ease: "power3.out" },
+    c.t0 + 0.03);
+  tl.to(card, { opacity: 0, duration: 0.10, ease: "power2.in" }, Math.max(c.t0 + 0.12, c.t1 - 0.11));
+  tl.set(card, { opacity: 0 }, c.t1);
+});
+
+tl.fromTo("#pill", { scale: 0.9, opacity: 0 },
+  { scale: 1, opacity: 1, duration: 0.34, ease: "back.out(2.4)" }, 0.18);
+tl.fromTo("#header", { y: -18, opacity: 0 },
+  { y: 0, opacity: 1, duration: 0.30, ease: "power2.out" }, 0.30);
+tl.fromTo("#foot", { opacity: 0 }, { opacity: 0.92, duration: 0.4 }, 0.6);
+
+window.__timelines = window.__timelines || {};
+window.__timelines["hfspike"] = tl;
+tl.seek(0);
+</script>
+</body></html>
