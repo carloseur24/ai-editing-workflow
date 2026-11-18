@@ -55,6 +55,8 @@ DEFAULT_SUBDIR = "fenix_sfx"
 
 SYNTH_ROLES = [
     "impact_sub",
+    "impact_braam",
+    "stinger_final",
     "riser_tension",
     "whoosh_air",
     "whoosh_whip",
@@ -63,6 +65,7 @@ SYNTH_ROLES = [
     "tick_micro",
     "chime_lock",
     "paper_slice",
+    "ui_data",
     "env_room",
 ]
 
@@ -230,6 +233,42 @@ def _synth_impact_sub() -> np.ndarray:
     return _normalise(_fade(_center(mix), 0.001, 0.08))
 
 
+def _synth_impact_braam() -> np.ndarray:
+    """Long cinematic braam used on the opening lock.
+
+    The commercial braam in `library.json` wins when it exists; this is the
+    deterministic fallback for a fresh public clone.
+    """
+    dur = 1.8
+    n = int(dur * SAMPLE_RATE)
+    t = np.arange(n, dtype=np.float64) / SAMPLE_RATE
+
+    def pad(x: np.ndarray) -> np.ndarray:
+        return np.pad(x, (0, max(0, n - len(x))))[:n]
+
+    sub = pad(_sweep(72.0, 38.0, 1.6)) * np.exp(-t / 0.85)
+    mid = pad(_sweep(190.0, 92.0, 1.2)) * np.exp(-t / 0.48) * 0.55
+    grit = _band(_noise(n, 210), 220.0, 1400.0) * np.exp(-t / 0.22) * 0.30
+    mix = np.tanh((0.95 * sub + mid + grit) * 1.45)
+    return _normalise(_fade(_center(mix), 0.002, 0.25))
+
+
+def _synth_stinger_final() -> np.ndarray:
+    """Final-lock stinger; a tighter sub hit than the opening braam."""
+    return _synth_impact_sub()
+
+
+def _synth_ui_data() -> np.ndarray:
+    """Short data blip for a numeric proof point (e.g. 128 GB)."""
+    dur = 0.18
+    n = int(dur * SAMPLE_RATE)
+    t = np.arange(n, dtype=np.float64) / SAMPLE_RATE
+    blip = _sweep(2400.0, 1200.0, dur) * np.exp(-t / 0.045) * 0.65
+    tick = _band(_noise(n, 230), 1800.0, 8000.0) * np.exp(-t / 0.004) * 0.5
+    mix = np.tanh((blip + tick) * 1.5)
+    return _normalise(_fade(_center(mix), 0.0005, 0.02))
+
+
 def _synth_riser_tension() -> np.ndarray:
     dur = 1.25
     n = int(dur * SAMPLE_RATE)
@@ -375,6 +414,8 @@ def _synth_env_room() -> np.ndarray:
 
 SYNTHESISERS = {
     "impact_sub": _synth_impact_sub,
+    "impact_braam": _synth_impact_braam,
+    "stinger_final": _synth_stinger_final,
     "riser_tension": _synth_riser_tension,
     "whoosh_air": _synth_whoosh_air,
     "whoosh_whip": _synth_whoosh_whip,
@@ -383,6 +424,7 @@ SYNTHESISERS = {
     "tick_micro": _synth_tick_micro,
     "chime_lock": _synth_chime_lock,
     "paper_slice": _synth_paper_slice,
+    "ui_data": _synth_ui_data,
     "env_room": _synth_env_room,
 }
 
@@ -633,7 +675,8 @@ def resolve_role(manifest: dict, library_dir: Path,
         if path.exists():
             files.append(path)
     if not files and entry.get("fallback"):
-        path = repo_path(entry["fallback"])
+        raw = str(entry["fallback"])
+        path = repo_path(raw[5:]) if raw.startswith("repo:") else library_dir / raw
         if path.exists():
             files.append(path)
     return files, entry
