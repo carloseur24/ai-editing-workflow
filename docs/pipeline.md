@@ -6,24 +6,27 @@ Nothing downstream re-invents a value that an upstream stage measured.
 
 | # | Command | Reads | Writes | Cost |
 |---|---|---|---|---|
-| 0 | `fenix storyboard <project>` | `input/<project>/brief.json` | `output/<project>/storyboard.{json,md}` | ~1 s |
+| 0 | `fenix storyboard <project>` | `input/<project>/brief.json` | `output/<project>/storyboard.{json,md}`, `output/<project>/shot_order.json` and `text_cards.json` when `story.shots` | ~1 s |
 | 0.5 | `fenix lint <sku>` | `input/<sku>/sku.json` | `output/<sku>/script_lint.json` | ~1 s |
 | 0.6 | `fenix tts <project>` (optional) | `tts.json`, provider key in env | `input/<project>/voice.mp3` | 2–20 s |
 | 1 | `fenix beats <sku>` | `assets/music/*`, config | `output/<sku>/beat_grid.json` | ~2 s |
 | 2 | `fenix frames <sku>` | `input/<sku>/clips/*` | `input/<sku>/keyframes/`, `input/<sku>/candidates.json` | ~20 s |
 | 3 | `fenix align <sku>` | `voice.mp3`, `sku.json` | `word_timings.json`, `narration_lines.json`, `voice_28s.wav` | ~15 s |
-| 4 | `fenix plan <sku>` | `narration_lines.json`, `candidates.json`, `picks.json` | `input/<sku>/edit_plan.json`, `output/<sku>/plan_edit.json` | ~2 s |
+| 4 | `fenix plan <sku>` | `brief.story.shots` or `narration_lines.json`, `candidates.json`, `picks.json` | `input/<sku>/edit_plan.json`, `output/<sku>/plan_edit.json` | ~2 s |
 | 5 | `fenix validate <sku>` | `edit_plan.json`, clips, beat grid | `output/<sku>/plan_validation.json` | ~2 s |
 | 5.5 | `fenix sfx <sku>` | `edit_plan.json`, `word_timings.json`, SFX library | `output/<sku>/sfx_cue_sheet.json`, `sfx_bus.wav`, `music_bed.wav`, `sfx_report.json` | ~2–5 s |
 | 6 | `fenix render <sku>` | `edit_plan.json`, clips, audio assets | `output/<sku>/<run>/…` | ~3 min |
+| 6.1 | `fenix render <sku> --preview` | the render's own timeline | `output/<sku>/preview/<stamp>/` + `preview.json` | 3–5 s |
 | 6.5 | `fenix motion <project>` | `motion.json` | `output/<p>/motion/<run>/plate.mp4|.mov`, manifest | 10 s–3 min |
 | 6.6 | `fenix track <project>` | `track.json`, clip | `output/<p>/track/track_<stamp>.json` | 2–10 s |
 | 6.7 | `fenix comp <project>` | `comp.json`, base + layer media, optional track | `output/<p>/comp/<run>/comp.mp4`, manifest | 5 s–1 min |
+| 6.7b | `fenix comp <project> --preview` | same spec | `output/<p>/preview/comp_<stamp>/` | <10 s |
 | 6.8 | `fenix fx <project>` | `fx.json`, clip | `output/<p>/fx/<run>/fx.mp4`, manifest | 5–30 s |
 | 6.9 | `fenix grade <project>` | `grade.json`, input, LUT/reference | `output/<p>/grade/<run>/graded.mp4`, stills, manifest | 5–30 s |
 | 6.10 | `fenix scopes <project>` | `scopes.json`/`--input`, frame time | `output/<p>/scopes/scopes_<stamp>/` | ~2 s |
 | 6.11 | `fenix longform <project>` | `longform.json`, chapter media | `output/<p>/longform/<run>/master.mp4`, `chapters.md` | 10 s–5 min |
-| 7 | `fenix qa --latest <sku> --strict` | the run | `<run>/qa_report.json` | ~30 s |
+| 7 | `fenix qa --latest <sku> --strict` | the run | local `<run>/qa_report.json` (never the shelf) | ~30 s |
+| 7.5 | `fenix qa --post --latest <sku>` | the newest comp run + its base | `<comp-run>/qa_report.json` (post profile) | ~20 s |
 | 8 | `fenix eval <sku> --skip-align --skip-render` | the run + `eval/<sku>_baseline.json` | `eval/<sku>_<stamp>.json` | ~30 s |
 | 9 | `fenix deliver --latest <sku>` | the run | `delivery.dir/<run>/` + `delivery.json` | ~1 s |
 | 9.5 | `fenix finish <project>` | latest run | strict QA → delivery shelf + flat Downloads → prune local media | ~40 s |
@@ -31,12 +34,24 @@ Nothing downstream re-invents a value that an upstream stage measured.
 `fenix job <project>` is the state card that opens a video task: it prints the
 mode, missing inputs, required skills, stage/render freshness and the next
 command without writing anything. It is not a stage.
+The four storage layers are machinery (`src/` + `config/pipeline.json`), project
+intent (`input/<project>/`, including an optional `config.json` overlay),
+generated media (`output/<project>/`) and the product (delivery shelf). The
+overlay is deep-merged after the global and machine-local configs, so a piece can
+change only its own duration, cuts, beat policy, safe zones or audio without
+polluting the portable defaults. See
+[agent/production-line.md](agent/production-line.md).
 `fenix make <project>` orchestrates the edit chain (stale stages → render/remix
 → QA → finish) from the same artifacts; it is a shortcut, not a separate stage.
 It combines mtime, per-stage config slices (`output/<p>/.state/`), the
 voice/script fingerprint in `word_timings.json`, and the render's
 `config_slices` so a delivery/config edit does not trigger a re-encode and an
-audio edit does not re-run the frame loop.
+audio edit does not re-run the frame loop. The slices are computed from the
+effective merged config, and `make --post comp` honors `post.motion` /
+`post.comp` from that same config. With `post.comp: false` the entire post chain
+(motion, comp, post QA, post delivery) is SKIP; `--post comp` never delivers the
+edit master itself, and the dry-run's `deliver` row says so instead of claiming a
+comp delivery.
 `fenix label scan/apply` is the footage-intake companion, not a chain stage: it
 probes a folder, builds sheets/vision grids, flags duplicates and renames safely
 before the clips enter `input/<project>/clips/`. See
@@ -51,6 +66,17 @@ structure: `hook_retain_reward` (short-form default), `storybrand` (brand),
 `three_act`, `aida`, `pas`, `bab`, `story_circle`, `pixar_spine`, `hero`.
 `story.decisions` records the human choices. Nothing renders until format,
 duration and story exist.
+
+### Order lock — `story.shots`
+
+When the brief carries an ordered shot table, storyboard stops inventing beats
+and validates that order instead: every `clip` exists under
+`input/<p>/clips/`, `in >= 0`, `in + dur <= source`, `dur >= min_cut_sec`, and
+the durations sum to `duration_sec` within `shots.sum_tolerance_sec`. It writes
+`output/<p>/shot_order.json` (`locked`, `order_source: "brief"`, per-shot rows,
+`pass`) and the scenes become that table. A missing clip, an overrun or a sum
+mismatch is a FAIL row with the offending shot named; exit 1. This is the
+artifact that removes "render once, discover the order was wrong".
 
 ## 0.5 Script lint
 
@@ -84,6 +110,15 @@ BPM, beat length, phase, beat count and the drift against the nominal config
 The demo bed is **118.97 BPM**, not the nominal 118: by the last beat the
 nominal grid is **235 ms** away. The planner snaps to the measured beat list, so
 cuts land within **3 ms**.
+
+`fenix beats` prints the requested and measured BPM and warns when the drift
+exceeds `quality.bpm_tolerance` (1.5 %). There is no stretch/fit pass: the
+warning is the guard, because the planner always trusts the measured grid and a
+mislabelled bed silently changes every cut length.
+
+`quality.beat_policy` decides what the offsets mean: `music` (default) keeps the
+cut-to-beat warn/error thresholds, `picture` reports them as info for a piece
+that cuts on action (cinematic long takes, documentary).
 
 ## 2. Keyframes and candidates
 
@@ -125,10 +160,22 @@ to finish the sentence; QA's `d_max` uses the same allowance.
 
 ## 4. Plan
 
-One cut per narration line. Short lines merge and long lines split at word
-boundaries until there are `cuts_per_video` units (16) of at least `min_cut_sec`
-(1.2 s). Boundaries are chosen **by beat index** on the measured grid, so a
-two-beat gap is 1.0086 s, not an arbitrary 1.0 s.
+**Locked order first.** If `brief.story.shots` exists, `fenix plan` re-validates
+it (the same rows storyboard wrote), then writes those exact cuts to
+`input/<sku>/edit_plan.json` with `"locked": true`, `"order_source": "brief"`
+and `duration_sec` = sku/brief duration. Cut durations are **not** derived from
+narration, so a music-only piece and a scene-by-scene brief both work. An
+unchanged plan is not rewritten; a locked plan with no shot table is left alone
+unless `--force` is passed. A cut list that no planner stamped
+(`shots.is_manual_plan`) is **hand-locked**: `fenix plan` reports it and keeps
+it, `fenix make` skips the stage, `fenix job` shows `locked plan (manual) ·
+confirmed`, and only `--force` replaces it. `fenix make` and `fenix job` use the
+same rule and never re-plan over a lock.
+
+Otherwise, one cut per narration line. Short lines merge and long lines split at
+word boundaries until there are `cuts_per_video` units (16) of at least
+`min_cut_sec` (1.2 s). Boundaries are chosen **by beat index** on the measured
+grid, so a two-beat gap is 1.0086 s, not an arbitrary 1.0 s.
 
 Footage selection:
 
@@ -191,7 +238,22 @@ Deterministic, single encode:
 - frames streamed into x264 over a rawvideo pipe (no intermediate file);
 - cuts laid out back-to-back from 0 s, the final shot extended to the voiceover;
 - punch-in 1.12× → 1.0× over 0.16 s on every cut;
+- optional pre-roll **transitions** (`config → transitions`, default off): the
+  last `sec` of the outgoing shot is blended with `sec` of handle before the
+  incoming shot's in-point, so the cut still lands on the planned frame.
+  `dissolve`, `fadeblack` and four wipes; each boundary is clamped to half the
+  shorter shot and skipped with a note when the handle is missing. The picture
+  is blended before punch-in/overlay/cards/captions; a transition replaces the
+  incoming shot's punch so there is no snap. `--transition KIND` forces one
+  render, `--no-transition` forces hard cuts;
 - static overlay blended per band, caption card with the spoken word in emerald;
+- optional native **timed title/spec cards** (`sku.text_cards`): white title +
+  mint spec, top-centred, fade-and-rise in and fade out, drawn per frame in the
+  same encode pass. A card costs a re-render, not a 5.5-min motion plate + comp;
+  absent fields (empty title/price/footer/badges) draw no pixels at all. When
+  `sku.text_cards` is absent, `output/<p>/text_cards.json` derived from
+  `brief.story.shots` is used. A card or a shot (`story.shots[].text_zone`) can
+  name a safe-zone band (`header`/`lower`/`center`) instead of a pixel `y`;
 - captions DP-chunked to ≤ 4 words / 26 chars on Whisper's sentence/clause flags,
   then a merge pass folds cards shorter than 0.45 s into a neighbour;
 - audio prefers the fresh `fenix sfx` artifacts: the already-ducked/vacuumed
@@ -199,12 +261,31 @@ Deterministic, single encode:
   the voice, then two-pass `loudnorm` to −14 LUFS / −1.5 dBTP; AAC 128 kbps.
   Without a fresh cue sheet it falls back to the legacy bed at −28 LUFS with
   one air-swish per cut, peak pre-rolled onto the cut;
+- **music-only** (`sku.voiceover: null`/`"none"`): no `word_timings.json`, no
+  captions, duration from `sku.duration_sec` → `brief.duration_sec` →
+  `target_duration_sec`, and a two-input mix (bed + SFX, no sidechain) using the
+  `audio.music_only` preset (−18 LUFS bed, −16 dBFS bus);
 - H.264 **Main @ level 4.2** (level 3.1/4.0 are invalid for 1080×1920@60),
   `faststart`, CRF 18 / 3800k maxrate, automatic CRF 21 / 2500k fallback above
   the 15.5 MB WhatsApp budget.
 
 Each render creates `output/<sku>/<sku>_<YYYYmmdd-HHMMSS>/` and indexes it in
-`output/<sku>/runs.json` + `latest.json`. `--remix` copies the previous video
+`output/<sku>/runs.json` + `latest.json`.
+
+### Stills preview (`render --preview`)
+
+One still per cut midpoint plus the first fully visible frame of every
+`sku.text_cards` entry, composited with the static overlay, cards, captions and
+grade in the same order as the render. It reads the normalised clip cache when it
+exists (pixel-equal) and scales the source otherwise; the manifest records which
+path was used. Measured on the S25 33 s fixture: **5 stills in 4.2 s**; a 6 s
+fixture with three cards: 6 stills in 2.9 s. No encode, no run directory, no
+`runs.json` entry.
+
+`comp --preview` does the same for the composite: one ffmpeg seek per base cut
+midpoint, each active layer extracted at its own local time and composited with
+the same scale/mask/key/opacity chain as `comp` (global fades are not previewed,
+and the manifest says so). Measured on S25: **5 stills in 7.4 s**. `--remix` copies the previous video
 into a new run and rebuilds only the audio mix (~13 s). `--draft` uses
 `veryfast`/CRF 23 and skips per-cut QA stills for review; it is not a delivery
 master.
@@ -256,10 +337,18 @@ screen or a smoothly moving product. Spec: `docs/examples/track.json`.
 One base + N layers in one FFmpeg graph: alpha MOV/PNG layers or chroma-keyed
 footage, `rect` or `ellipse` masks, linear move (`from` → `to`) or tracked
 `nx`/`ny`, scale/opacity and fade in/out. Spec: `docs/examples/comp.json`.
-Output: `output/<project>/comp/<run>/comp.mp4` + manifest. This is the VFX
-joining point: a `fenix motion` plate becomes a layer over footage, and a phone
-screen can be replaced with a keyed insert. No rotation, blend modes or roto;
-tracking is template matching.
+`base`, layer `src` and `track` accept **stable refs** (`@render/latest`,
+`@motion/latest/plate.mov`, `@track/latest`) resolved from the run index and the
+newest stage output, so a spec survives a new render. Output:
+`output/<project>/comp/<run>/comp.mp4` + manifest. This is the VFX joining
+point: a `fenix motion` plate becomes a layer over footage, and a phone screen
+can be replaced with a keyed insert. Encoding comes from the shared
+`config/pipeline.json → encoding` block (codec/profile/pix_fmt/maxrate) and the
+result is held under `encoding.max_whatsapp_bytes` with the same CRF fallback as
+the edit renderer; the base audio is copied, not re-encoded. `--reuse` copies
+the newest comp whose spec **and** resolved inputs (size + mtime) are unchanged
+instead of re-encoding. No rotation, blend modes or roto; tracking is template
+matching.
 
 ## 6.8 FX (`fenix fx`)
 
@@ -300,7 +389,9 @@ no per-chapter audio, transcript-driven selection or multicam audio mixing yet.
 
 30 checks across container, audio, duration, edit, content and bookkeeping. See
 [reference/qa-gates.md](reference/qa-gates.md). `--strict` treats warnings as
-failures and is required for delivery.
+failures and is required for delivery. A music-only master is still checked for
+duration, loudness, peak, black frames, size and shot identity; the
+voice/script/caption rows are dropped and recorded in `skipped_checks`.
 
 ## 8. Regression
 
@@ -312,7 +403,13 @@ directional. `--update-baseline` promotes a run once accepted.
 
 ## 9. Delivery
 
-Copies the MP4, contact sheet, QA report, caption audit and `*.md` notes into
-`delivery.dir` from `config/pipeline.json`, under the run name, and records
-`delivered_to` in `runs.json`. The repo stays canonical; the delivery folder is a
-shelf, never a second source of truth.
+`fenix deliver` builds one plan (`ops/bundle.py`) for the shelf and the flat
+Downloads, then copies it: the master, contact sheet, QA report, caption audit,
+shot order, render plan, word timings, script/no-VO note, SFX evidence and every
+`delivery.copy` pattern that exists. It writes a generated
+`delivery_readme.md` (title, duration, shot table, audio mode, file list) and
+records `copied`/`skipped` in `delivery.json`. Stage deliveries (`comp`,
+`grade`, `longform`, `motion`) use the same planner with an explicit master, so
+`comp.mp4` ships beside its spec/manifest and QA report. `--prune` runs only
+after a size (shelf) and sha256 (Downloads) verification. The repo stays
+canonical; the delivery folder is a shelf, never a second source of truth.
