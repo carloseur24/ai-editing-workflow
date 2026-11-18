@@ -1,0 +1,15 @@
+{
+  "title": "",
+  "subtitle": "",
+  "badges": [],
+  "price_label": "",
+  "footer": "",
+  "safe_zone_mode": "reels_universal",
+  "allow_fast_captions": true,
+  "voiceover": "voice.mp3",
+  "script_text": "Te presento al gigante, Samsung Galaxy S25 Ultra de 512 GB con el brutal Snapdragon 8 Elite. Mira el nivel de control con este stylus. Observa la pura potencia que lleva adentro. Su pantalla Dynamic AMOLED 2X es una locura visual. Y esa cámara de 200 megapíxeles destruye la competencia.",
+  "display_merge": {
+    "512 GB": "512GB",
+    "200 MEGAPIXELES": "200MP"
+  }
+}
