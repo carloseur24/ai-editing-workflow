@@ -45,7 +45,10 @@ config/pipeline.local.json -> delivery shelf, SFX library location
   belongs in `.gitignore`.
 - Do not add a second config file for normal settings. Put portable defaults in
   `config/pipeline.json`; put only machine-local paths in
-  `config/pipeline.local.json`.
+  `config/pipeline.local.json`; put a value that is true for one piece in
+  `input/<project>/config.json` (project intent, tracked, sparse overlay).
+  Media still stays local: a project config never carries footage, voice, a
+  music bed or a delivery path.
 - A render must not fetch assets from the network. Fonts, textures, GSAP and the
   SFX role map are local files for that reason.
 - If something is missing, do not invent it: `./fenix doctor` and
