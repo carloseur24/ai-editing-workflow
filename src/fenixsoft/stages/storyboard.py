@@ -17,7 +17,11 @@ import json
 import sys
 from pathlib import Path
 
-from ..context import INPUT_DIR, output_dir
+from ..context import DEFAULT_CONFIG, INPUT_DIR, load_config, output_dir
+from ..domain import brief as brief_mod
+from ..domain import labels as labels_mod
+from ..domain import shots as shots_mod
+from ..domain.quality import probe_duration
 
 QUESTIONS: list[tuple[str, list[str]]] = [
     ("Intent", [
@@ -225,7 +229,7 @@ BRIEF_TEMPLATE = {
     "tone": "",
     "references": [],
     "story": {"framework": "", "hook": "", "beats": [], "cta": "",
-              "decisions": []},
+              "decisions": [], "shots": []},
     "assets": {"footage_dir": "", "clips": [], "images": [],
                "voiceover": "", "music": "", "sfx": []},
     "motion": {"style": "", "elements": [], "transitions": []},
@@ -280,14 +284,39 @@ def load_brief(project_dir: Path) -> tuple[dict, list[str]]:
 
 def missing_fields(brief: dict) -> list[str]:
     missing = []
+    has_shots = bool(shots_mod.shots_from_brief(brief))
     for path, hint in REQUIRED.items():
+        if path == "story.hook" and has_shots:
+            continue      # an ordered shot table is the story; hook text is optional
         value = _get(brief, path)
         if value in (None, "", 0, []):
             missing.append(f"{path} ({hint})")
     return missing
 
 
-def build_storyboard(brief: dict, framework: str | None = None) -> dict:
+def scene_from_shot(shot: dict) -> dict:
+    """One storyboard scene from an order-locked shot entry."""
+    return {
+        "id": shot["index"],
+        "purpose": shot.get("label") or "shot",
+        "t0": shot["t0"],
+        "t1": shot["t1"],
+        "seconds": round(shot["t1"] - shot["t0"], 3),
+        "text": shot.get("spec", ""),
+        "visual": shot.get("label", ""),
+        "audio": "",
+        "motion": "",
+        "clip": shot.get("clip"),
+        "in": shot.get("in"),
+        "dur": shot.get("dur"),
+        "text_zone": shot.get("text_zone"),
+    }
+
+
+def build_storyboard(brief: dict, framework: str | None = None,
+                     durations: dict[str, float] | None = None,
+                     shots_cfg: dict | None = None,
+                     min_cut_sec: float = 0.0) -> dict:
     duration = float(brief.get("duration_sec") or 0)
     story = brief.get("story", {}) or {}
     project_type = str(brief.get("project_type") or "").strip().lower()
@@ -297,32 +326,56 @@ def build_storyboard(brief: dict, framework: str | None = None) -> dict:
     if fw is None:
         key = default_key
         fw = FRAMEWORKS[key]
-    beats = story.get("beats") or []
-    if not beats:
-        beats = [{"purpose": purpose, "weight": weight,
-                  "prompt": prompt}
-                 for purpose, weight, prompt in fw["beats"]]
-    weight_sum = sum(float(b.get("weight", 1.0)) for b in beats) or 1.0
-    scenes, cursor = [], 0.0
-    for i, beat in enumerate(beats):
-        share = float(beat.get("weight", 1.0)) / weight_sum
-        length = duration * share
-        start, end = cursor, min(duration, cursor + length)
-        scenes.append({
-            "id": i,
-            "purpose": beat.get("purpose") or f"beat_{i}",
-            "t0": round(start, 3),
-            "t1": round(end, 3),
-            "seconds": round(end - start, 3),
-            "text": beat.get("text", ""),
-            "visual": beat.get("visual", ""),
-            "audio": beat.get("audio", ""),
-            "motion": beat.get("motion", ""),
-        })
-        cursor = end
-    if scenes:
-        scenes[-1]["t1"] = duration
-        scenes[-1]["seconds"] = round(duration - scenes[-1]["t0"], 3)
+
+    ordered = shots_mod.shots_from_brief(brief)
+    order = None
+    if ordered:
+        sh_cfg = {**shots_mod.DEFAULTS, **(shots_cfg or {})}
+        checks = (shots_mod.validate_shots(
+            ordered, durations or {}, duration,
+            min_dur=float(min_cut_sec or 0.0),
+            source_tolerance=float(sh_cfg["source_tolerance_sec"]),
+            sum_tolerance=float(sh_cfg["sum_tolerance_sec"]))
+            if durations is not None else [])
+        ordered = shots_mod.timeline(ordered)
+        order = {
+            "locked": True,
+            "source": "brief",
+            "total_sec": round(sum(float(s.get("dur") or 0) for s in ordered), 3),
+            "shots": ordered,
+            "checks": checks,
+            "pass": shots_mod.shots_pass(checks) if checks else True,
+        }
+        scenes = [scene_from_shot(s) for s in ordered]
+    else:
+        beats, beat_errors = brief_mod.normalize_beats(story.get("beats"))
+        if beat_errors:
+            raise SystemExit(brief_mod.schema_message(beat_errors))
+        if not beats:
+            beats = [{"purpose": purpose, "weight": weight,
+                      "prompt": prompt}
+                     for purpose, weight, prompt in fw["beats"]]
+        weight_sum = sum(float(b.get("weight", 1.0)) for b in beats) or 1.0
+        scenes, cursor = [], 0.0
+        for i, beat in enumerate(beats):
+            share = float(beat.get("weight", 1.0)) / weight_sum
+            length = duration * share
+            start, end = cursor, min(duration, cursor + length)
+            scenes.append({
+                "id": i,
+                "purpose": beat.get("purpose") or f"beat_{i}",
+                "t0": round(start, 3),
+                "t1": round(end, 3),
+                "seconds": round(end - start, 3),
+                "text": beat.get("text", ""),
+                "visual": beat.get("visual", ""),
+                "audio": beat.get("audio", ""),
+                "motion": beat.get("motion", ""),
+            })
+            cursor = end
+        if scenes:
+            scenes[-1]["t1"] = duration
+            scenes[-1]["seconds"] = round(duration - scenes[-1]["t0"], 3)
 
     return {
         "title": brief.get("title", ""),
@@ -333,6 +386,7 @@ def build_storyboard(brief: dict, framework: str | None = None) -> dict:
         "duration_sec": duration,
         "tone": brief.get("tone", ""),
         "scenes": scenes,
+        "order": order,
         "missing": missing_fields(brief),
         "deliverables": brief.get("deliverables", []),
     }
@@ -358,10 +412,38 @@ def write_markdown(story: dict) -> str:
         lines.append(
             f"| {s['id']} | {s['purpose']} | {s['t0']:.2f} | {s['t1']:.2f} | "
             f"{s['visual']} | {s['audio']} | {s['motion']} |")
+    order = story.get("order")
+    if order:
+        lines += ["", "## Locked shot order", "",
+                  f"Source: **{order['source']}** · "
+                  f"{len(order['shots'])} shots · {order['total_sec']:.2f} s", "",
+                  "| # | Clip | In | Dur | Label | Spec |",
+                  "|---|---|---|---|---|---|"]
+        for shot in order["shots"]:
+            lines.append(
+                f"| {shot['index']} | {shot['clip']} | {shot['in']:.2f} | "
+                f"{shot['dur']:.2f} | {shot.get('label', '')} | "
+                f"{shot.get('spec', '')} |")
+        if order["checks"]:
+            lines += ["", "Order checks: " + ", ".join(
+                f"{c['id']} {'PASS' if c['pass'] else 'FAIL'}"
+                for c in order["checks"])]
     if story["missing"]:
         lines += ["", "## Missing before production", ""]
         lines += [f"- {m}" for m in story["missing"]]
     return "\n".join(lines) + "\n"
+
+
+def clip_durations(project_dir: Path, brief: dict) -> dict[str, float]:
+    """Duration of every clip the brief names (missing files stay absent)."""
+    names = {str(s.get("clip") or "") for s in
+             (shots_mod.shots_from_brief(brief) or [])}
+    out: dict[str, float] = {}
+    for name in sorted(names):
+        path = project_dir / "clips" / name
+        if name and path.exists():
+            out[name] = probe_duration(path)
+    return out
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -369,6 +451,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("project", help="project folder under input/")
     parser.add_argument("--questions", action="store_true",
                         help="print the intake questionnaire and exit")
+    parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--framework", choices=sorted(FRAMEWORKS),
                         help="story framework (default: hook_retain_reward)")
@@ -389,27 +472,77 @@ def main(argv: list[str] | None = None) -> None:
             encoding="utf-8")
 
     brief, notes = load_brief(project_dir)
-    story = build_storyboard(brief, args.framework)
+    cfg = load_config(args.config, project=project_dir)
+    ordered = shots_mod.shots_from_brief(brief)
+    durations = clip_durations(project_dir, brief) if ordered else None
+    story = build_storyboard(
+        brief, args.framework, durations,
+        shots_cfg=cfg.get("shots") or {},
+        min_cut_sec=float(cfg.get("min_cut_sec", 0) or 0))
     out = output_dir(project_dir.name)
     out.mkdir(parents=True, exist_ok=True)
     (out / "storyboard.json").write_text(
         json.dumps(story, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     (out / "storyboard.md").write_text(write_markdown(story), encoding="utf-8")
 
+    order = story.get("order")
+    order_path = None
+    cards_path = None
+    if order:
+        order_path = out / "shot_order.json"
+        order_path.write_text(json.dumps({
+            "sku": project_dir.name,
+            "generated_by": "fenix storyboard",
+            "locked": True,
+            "order_source": "brief",
+            "duration_sec": story["duration_sec"],
+            "total_sec": order["total_sec"],
+            "pass": order["pass"],
+            "shots": order["shots"],
+            "checks": order["checks"],
+        }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        if order["pass"]:
+            # One title/spec card per shot, derived from the locked order. The
+            # renderer reads this only when sku.text_cards is absent, so a
+            # hand-authored card list still wins. Legacy/VO projects have no
+            # story.shots and get no file.
+            cards = labels_mod.text_cards_from_shots(
+                order["shots"], story["duration_sec"], cfg)
+            cards_path = out / "text_cards.json"
+            cards_path.write_text(
+                json.dumps(cards, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8")
+
     if args.json:
         print(json.dumps(story, ensure_ascii=False, indent=2))
+        if order and not order["pass"]:
+            sys.exit(1)
         return
     print(f"[storyboard] {project_dir / 'brief.json'}")
-    print(f"[storyboard] {len(story['scenes'])} scenes, "
-          f"{story['duration_sec']:.2f}s -> {out / 'storyboard.md'}")
+    if order:
+        print(f"[storyboard] locked shot order: {len(order['shots'])} shots, "
+              f"{order['total_sec']:.2f}s -> {order_path}")
+        if cards_path:
+            print(f"[storyboard] text cards: {len(cards)} derived from the "
+                  f"shot labels -> {cards_path}")
+        for check in order["checks"]:
+            print(f"[{'PASS' if check['pass'] else 'FAIL'}] {check['id']:<14} "
+                  f"{check['measured']}")
+            if not check["pass"] and check["fix"]:
+                print(f"        fix: {check['fix']}")
+    else:
+        print(f"[storyboard] {len(story['scenes'])} scenes, "
+              f"{story['duration_sec']:.2f}s -> {out / 'storyboard.md'}")
     if story["missing"]:
         print(f"[storyboard] {len(story['missing'])} missing fact(s):")
         for m in story["missing"]:
             print(f"  - {m}")
         print("\nAsk the intake questions: fenix storyboard "
               f"{args.project} --questions")
-    else:
+    elif not order:
         print("[storyboard] brief complete; next: gather assets, then plan/render")
+    if order and not order["pass"]:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
