@@ -4,6 +4,21 @@ Every path a stage needs is defined here once. If a directory moves, it moves
 here and every command follows. Agent-facing contract: inputs are read from
 ``input/<sku>/``, derived artifacts are written to ``output/<sku>/`` and
 ``output/<sku>/<run>/``, never anywhere else.
+
+Production-line config layers
+-----------------------------
+``config/pipeline.json`` is machinery: portable defaults, no project values.
+``config/pipeline.local.json`` is machine-local and gitignored.
+``input/<project>/config.json`` is project intent: a sparse overlay of only the
+keys this piece changes. Precedence, low to high:
+
+    base (global defaults or explicit --config)  <  machine-local  <  project
+
+An explicit ``--config`` replaces the global base (and, as before, suppresses
+the machine-local file) but never defeats the project overlay: a project's
+config is part of that project's intent. In the project overlay a ``null``
+value removes an inherited key (deep-merge delete), which is how a project
+opts out of a global preset such as ``audio.music_only``.
 """
 from __future__ import annotations
 
@@ -37,6 +52,7 @@ MUSIC_DIR = ASSETS_DIR / "music"
 SFX_DIR = ASSETS_DIR / "sfx"
 
 # Names of the per-SKU files, in one place so docs and code cannot drift.
+PROJECT_CONFIG_JSON = "config.json"
 SKU_JSON = "sku.json"
 PICKS_JSON = "picks.json"
 CANDIDATES_JSON = "candidates.json"
@@ -56,9 +72,16 @@ def _read_config(path: Path) -> dict[str, Any]:
 
 
 def deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
-    """Recursively merge ``overlay`` onto ``base`` without mutating either."""
+    """Recursively merge ``overlay`` onto ``base`` without mutating either.
+
+    A ``None`` in the overlay removes the inherited key, so a project can opt
+    out of a global preset instead of re-stating its values.
+    """
     merged = dict(base)
     for key, value in overlay.items():
+        if value is None:
+            merged.pop(key, None)
+            continue
         current = merged.get(key)
         if isinstance(current, dict) and isinstance(value, dict):
             merged[key] = deep_merge(current, value)
@@ -67,13 +90,45 @@ def deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
     return merged
 
 
-def load_config(path: Path | str | None = None) -> dict[str, Any]:
-    """Load the pipeline config; relative paths resolve against the repo root.
+def project_config_path(project: Path | str) -> Path:
+    """``input/<project>/config.json`` — the project's sparse config overlay."""
+    return Path(project) / PROJECT_CONFIG_JSON
+
+
+def project_overrides(project: Path | str | None) -> dict[str, Any]:
+    """The project overlay as written (empty when absent)."""
+    if project is None:
+        return {}
+    path = project_config_path(project)
+    if not path.exists():
+        return {}
+    return _read_config(path)
+
+
+def count_overrides(overlay: dict[str, Any]) -> int:
+    """Number of leaf values a project overlay sets (for ``job``)."""
+    total = 0
+    for value in overlay.values():
+        if isinstance(value, dict):
+            total += count_overrides(value)
+        else:
+            total += 1
+    return total
+
+
+def load_config(path: Path | str | None = None,
+                project: Path | str | None = None) -> dict[str, Any]:
+    """Load the effective pipeline config for an optional project.
 
     The default config is portable. A gitignored ``config/pipeline.local.json``
     is deep-merged on top when it exists, so one machine can point at its
     Windows delivery shelf or SFX library without changing the public config.
-    An explicit path that points at a different file is loaded verbatim.
+    ``input/<project>/config.json`` is then deep-merged on top: project intent
+    wins over both the global defaults and the machine-local file.
+
+    An explicit ``path`` is a deliberate base: it replaces the global config
+    (and, as before, skips the machine-local file) but the project overlay
+    still applies, because a project cannot silently lose its own requirements.
     """
     config_path = Path(path) if path is not None else DEFAULT_CONFIG
     if not config_path.is_absolute() and not config_path.exists():
@@ -84,7 +139,15 @@ def load_config(path: Path | str | None = None) -> dict[str, Any]:
     is_default = config_path.resolve() == DEFAULT_CONFIG.resolve()
     if is_default and LOCAL_CONFIG.exists():
         data = deep_merge(data, _read_config(LOCAL_CONFIG))
+    if project is not None:
+        data = deep_merge(data, project_overrides(project))
     return data
+
+
+def load_config_for(project: Path | str,
+                    path: Path | str | None = None) -> dict[str, Any]:
+    """``load_config`` scoped to a resolved project directory."""
+    return load_config(path, project=project)
 
 
 def resolve_sku_dir(value: Path | str) -> Path:
@@ -121,6 +184,15 @@ def output_dir(sku_dir: Path | str) -> Path:
 def artifact(sku_dir: Path | str, name: str) -> Path:
     """A flat derived artifact such as beat_grid.json or narration_lines.json."""
     return output_dir(sku_dir) / name
+
+
+def stage_dir(sku_dir: Path | str, stage: str) -> Path:
+    """``output/<sku>/<stage>/`` — timestamped runs of a post stage.
+
+    ``motion``, ``comp``, ``fx``, ``grade``, ``longform`` and ``track`` each own
+    one of these directories; stable refs (``@motion/latest``) resolve here.
+    """
+    return output_dir(sku_dir) / stage
 
 
 def cache_dir(name: str) -> Path:
