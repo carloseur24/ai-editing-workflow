@@ -205,6 +205,8 @@ The manifest maps semantic roles to files inside
 root. Each role has `files[]` (candidate paths, deterministic choice per cue),
 `gain_db`, `max_sec` and `align` (`start`, `peak`, `end`, `loop`). The
 procedural core installed by `fenix sfx --install-library` is `impact_sub`,
-`riser_tension`, `whoosh_air`, `whoosh_whip`, `click_tactile`, `thud_body`,
-`tick_micro`, `chime_lock`, `paper_slice`, `env_room`; licensed roles can be
-added without code.
+`impact_braam`, `stinger_final`, `riser_tension`, `whoosh_air`, `whoosh_whip`,
+`click_tactile`, `thud_body`, `tick_micro`, `chime_lock`, `paper_slice`,
+`ui_data`, `env_room`. A role may declare `fallback` for when its licensed files
+are absent; a relative fallback resolves inside `sfx.library_dir`, a `repo:`
+prefix resolves from the repo root. Licensed roles can be added without code.
