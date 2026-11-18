@@ -5,22 +5,28 @@
     "height": 1920,
     "fps": 60
   },
-  "target_duration_sec": 33.0,
+  "target_duration_sec": 28.0,
   "bpm": 120,
-  "cuts_per_video": 5,
+  "cuts_per_video": 16,
   "cut_snap_to_beat": true,
   "min_cut_sec": 1.2,
+  "shots": {
+    "source_tolerance_sec": 0.02,
+    "sum_tolerance_sec": 0.25
+  },
   "script": {
     "spoken_wpm": 162,
     "max_tempo": 1.12
   },
   "quality": {
-    "in_point_floor": 0.25,
-    "beat_offset_warn_ms": 350,
-    "beat_offset_fail_ms": 400,
+    "in_point_floor": 0.6,
+    "beat_offset_warn_ms": 60,
+    "beat_offset_fail_ms": 120,
     "caption_warn_cps": 20,
     "caption_fail_cps": 25,
-    "max_duration_sec": 33.5
+    "max_duration_sec": 28.5,
+    "beat_policy": "music",
+    "bpm_tolerance": 1.5
   },
   "punch": {
     "enabled": false,
@@ -28,8 +34,17 @@
     "scale": 1.12,
     "ease": "out_cubic"
   },
+  "transitions": {
+    "enabled": false,
+    "default": "dissolve",
+    "sec": 0.35
+  },
+  "post": {
+    "motion": true,
+    "comp": true
+  },
   "layout": {
-    "bottom_stack_shift_pct": 0
+    "bottom_stack_shift_pct": 0.2
   },
   "grade": {
     "mode": "baked",
@@ -58,19 +73,23 @@
     "true_peak_db": -1.5,
     "limiter_ceiling": 0.78,
     "lra": 11.0,
-    "music_bed_lufs": -18.0,
+    "music_bed_lufs": -28.0,
     "duck_ratio": 4.0,
     "duck_threshold": 0.03,
     "duck_attack_ms": 8,
     "duck_release_ms": 350,
     "music_fade_in_sec": 0.25,
-    "music_fade_out_sec": 2.2,
+    "music_fade_out_sec": 0.7,
     "sfx_gain_db": -17.4,
-    "sfx_fade_sec": 0.3
+    "sfx_fade_sec": 0.3,
+    "music_only": {
+      "bed_lufs": -18.0,
+      "sfx_dbfs": -16.0
+    }
   },
   "music": {
-    "file": "assets/music/groove_120bpm.wav",
-    "bpm": 120
+    "file": "assets/music/groove_118bpm.wav",
+    "bpm": 118
   },
   "sfx": {
     "file": "assets/sfx/whoosh_short.wav",
@@ -105,8 +124,8 @@
       "header_y_start": 110,
       "title_y": 118,
       "sub_y": 194,
-      "badge_y": -500,
-      "price_y": -400,
+      "badge_y": 254,
+      "price_y": 1310,
       "caption_y": 1445,
       "footer_y": 1585
     },
@@ -116,8 +135,8 @@
       "header_y_start": 110,
       "title_y": 118,
       "sub_y": 194,
-      "badge_y": -500,
-      "price_y": -400,
+      "badge_y": 254,
+      "price_y": 1350,
       "caption_y": 1485,
       "footer_y": 1625
     }
@@ -140,6 +159,18 @@
     "phrase_enter_ms": 100,
     "hold_last_gap_ms": 600
   },
+  "text_cards": {
+    "y": 250,
+    "size": 86,
+    "sub_size": 34,
+    "color": "#FFFFFF",
+    "sub_color": "#6EE7B7",
+    "enter_sec": 0.45,
+    "exit_sec": 0.3,
+    "rise_px": 24,
+    "sub_gap_ratio": 0.3,
+    "shadow": true
+  },
   "alignment": {
     "engine": "faster-whisper",
     "model": "small",
@@ -159,7 +190,7 @@
     "end_pad_sec": 0.12,
     "tail_extension_max_sec": 0.8,
     "max_extra_sec": 2.0,
-    "tail_pad_sec": 11.176
+    "tail_pad_sec": 0.35
   },
   "delivery": {
     "dir": "output/delivery",
@@ -186,5 +217,11 @@
     "grid_cell_width": 300,
     "duplicate_threshold": 8,
     "name_max_len": 80
+  },
+  "preview": {
+    "max_stills": 24,
+    "tile_width": 270,
+    "tile_height": 480,
+    "columns": 4
   }
 }
