@@ -24,7 +24,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from ..context import INPUT_DIR, OUTPUT_DIR, resolve_sku_dir
+from ..context import INPUT_DIR, OUTPUT_DIR, REPO_ROOT, resolve_sku_dir
 
 STAMP_FMT = "%Y%m%d-%H%M%S"
 RUN_RE = re.compile(r"^(?P<sku>.+?)_(?P<stamp>\d{8}-\d{6})(?:-(?P<n>\d+))?$")
@@ -45,6 +45,23 @@ def new_run_dir(sku: str, root: Path | None = None,
     while path.exists():
         run_id = f"{sku}_{stamp}-{n}"
         path = base / run_id
+        n += 1
+    path.mkdir(parents=True)
+    return path
+
+
+def new_timestamped_dir(base: Path, when: datetime | None = None) -> Path:
+    """Create ``<base>/<YYYYmmdd-HHMMSS>/`` (``-2`` on a same-second clash).
+
+    Used by previews: they are timestamped review artifacts under
+    ``output/<sku>/preview/`` but are not runs, so they never enter
+    ``runs.json`` or ``latest.json``.
+    """
+    stamp = (when or datetime.now()).strftime(STAMP_FMT)
+    path = base / stamp
+    n = 2
+    while path.exists():
+        path = base / f"{stamp}-{n}"
         n += 1
     path.mkdir(parents=True)
     return path
@@ -100,6 +117,137 @@ def resolve_for_video(video: Path, root: Path | None = None) -> tuple[str, Path]
         except json.JSONDecodeError:
             pass
     return sku, input_dir(sku, root)
+
+
+# Post-stage artifacts with a stable name, so `@<stage>/latest` needs no path.
+STAGE_ARTIFACTS = {
+    "motion": ("plate.mov", "plate.mp4"),
+    "comp": ("comp.mp4",),
+    "fx": ("fx.mp4",),
+    "grade": ("graded.mp4",),
+    "longform": ("master.mp4",),
+}
+
+
+def is_stable_ref(value: str | Path | None) -> bool:
+    return str(value or "").startswith("@")
+
+
+def resolve_stable_ref(value: str | Path, sku: str,
+                       root: Path | None = None) -> Path | None:
+    """Resolve ``@render/latest`` / ``@motion/latest/plate.mov`` to a real file.
+
+    Stable refs let a post spec point at "the newest edit render" or "the
+    newest motion plate" without pasting a timestamp that changes every run:
+
+        @render/latest                     newest run video
+        @render/latest/edit_plan.json      a file inside the newest run
+        @motion/latest                     newest plate (plate.mov or .mp4)
+        @motion/latest/manifest.json       a file inside the newest stage run
+        @track/latest                      newest tracking JSON
+
+    Explicit paths keep working; an unresolvable ref returns ``None`` so the
+    caller can name the missing stage instead of silently rendering nothing.
+    """
+    raw = str(value or "")
+    if not raw.startswith("@"):
+        return None
+    parts = [p for p in raw[1:].split("/") if p]
+    if len(parts) < 2 or parts[1] != "latest":
+        return None
+    stage, rest = parts[0], parts[2:]
+
+    if stage == "render":
+        latest = latest_run(sku, root)
+        if not latest:
+            return None
+        base = Path(latest.get("dir") or Path(latest["video"]).parent)
+        if rest:
+            path = base.joinpath(*rest)
+            if path.exists():
+                return path
+            # The run may have been pruned after delivery; the index still
+            # points at the delivered master, so sibling evidence is gone.
+            return None
+        video = latest.get("video")
+        return Path(video) if video and Path(video).exists() else None
+
+    base = output_root(sku, root) / stage
+    if not base.exists():
+        return None
+    if stage == "track":
+        candidates = sorted(base.glob("*.json"), key=lambda p: p.stat().st_mtime)
+        if rest:
+            path = base.joinpath(*rest)
+            return path if path.exists() else None
+        return candidates[-1] if candidates else None
+    dirs = sorted((d for d in base.iterdir() if d.is_dir()),
+                  key=lambda p: p.stat().st_mtime)
+    if not dirs:
+        return None
+    newest = dirs[-1]
+    if rest:
+        path = newest.joinpath(*rest)
+        return path if path.exists() else None
+    for name in STAGE_ARTIFACTS.get(stage, ()):
+        path = newest / name
+        if path.exists():
+            return path
+    videos = sorted(newest.glob("*.mp4"))
+    return videos[0] if videos else None
+
+
+def delivery_roots(cfg: dict | None) -> list[Path]:
+    """Resolved delivery shelf/downloads roots from the config (may be empty)."""
+    deliv = (cfg or {}).get("delivery") or {}
+    roots: list[Path] = []
+    for key in ("dir", "downloads"):
+        value = deliv.get(key)
+        if not value:
+            continue
+        path = Path(str(value)).expanduser()
+        if not path.is_absolute():
+            path = REPO_ROOT / path
+        roots.append(path.resolve())
+    return roots
+
+
+def is_on_delivery_shelf(video: Path | str, cfg: dict | None) -> bool:
+    """True when ``video`` lives inside the configured delivery shelf."""
+    try:
+        target = Path(video).resolve()
+    except OSError:
+        return False
+    for root in delivery_roots(cfg):
+        try:
+            target.relative_to(root)
+            return True
+        except ValueError:
+            continue
+    return False
+
+
+def evidence_dir(video: Path | str, cfg: dict | None) -> Path:
+    """Local directory that keeps evidence (QA report) about ``video``.
+
+    Policy: only delivery commands write to the delivery shelf. A local run
+    keeps its report next to the master; a delivered master resolves to the
+    local run directory when it still exists (finish prunes media, not JSON),
+    otherwise to ``output/<sku>/qa/<run>/``.
+    """
+    video = Path(video)
+    if not is_on_delivery_shelf(video, cfg):
+        return video.parent
+    sku, _ = resolve_for_video(video)
+    local = output_root(sku) / video.parent.name
+    if local.is_dir():
+        return local
+    return output_root(sku) / "qa" / video.parent.name
+
+
+def evidence_path(video: Path | str, cfg: dict | None,
+                  name: str = "qa_report.json") -> Path:
+    return evidence_dir(video, cfg) / name
 
 
 def list_runs(sku: str, root: Path | None = None) -> list[dict]:
