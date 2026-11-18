@@ -1,0 +1,185 @@
+{
+  "basic": {
+    "title": "Text, Typography and Kinetic Captions",
+    "domain": "Motion graphics / typography and captions",
+    "one_liner": "HyperFrames treats text as styled DOM plus a paused timeline, with bundled fonts, canvas-based fitting and word-level caption components instead of a subtitle renderer.",
+    "official_sources": [
+      "https://hyperframes.heygen.com/catalog/components/caption-highlight",
+      "https://hyperframes.heygen.com/catalog/components/caption-kinetic-slam",
+      "https://hyperframes.heygen.com/prompting/captions-catalog",
+      "https://hyperframes.heygen.com/guides/captions-and-recuts",
+      "https://github.com/heygen-com/hyperframes/blob/main/skills/hyperframes/references/captions.md",
+      "https://github.com/heygen-com/hyperframes/blob/main/skills/hyperframes/references/format.md",
+      "https://hyperframes.heygen.com/guides/gsap-animation",
+      "https://www.npmjs.com/package/@hyperframes/core"
+    ],
+    "maturity": "production",
+    "last_verified": "2026-11-15"
+  },
+  "capabilities": {
+    "what_it_enables": "Broadcast-grade on-screen type inside a deterministic render: per-word and per-character kinetic captions driven by real word timings, automatic single-line fitting measured off a canvas, 18 bundled font families with no network at capture time, and a catalog of ~60 text blocks and components (highlight sweeps, karaoke pills, gradient fills, neon, glitch, scramble, variable-axis morphs, texture masks) that are editable source, not opaque presets.",
+    "key_features": [
+      "Caption model: words come in as [{id, text, start, end}], are grouped 2-3 words for high energy, 3-5 conversational, 4-6 calm, and each group is one absolutely positioned element with one entrance, per-word highlights and a hard kill.",
+      "Word timings are produced by `npx hyperframes transcribe <file> --json` (Whisper `small.en` by default) into assets/transcript.json, with `--to srt` and `--to vtt` sidecars; an existing corrected transcript can be re-applied with `npx hyperframes transcribe transcript.json --dir <project>`.",
+      "Auto-fit: `window.__hyperframes.fitTextFontSize(text, {fontFamily, fontWeight, maxWidth, baseFontSize, minFontSize, step})` returns {fontSize, fits}; defaults are base 78 px, min 42 px, step 2, weight 900, family Outfit, and it shrinks until the string fits on ONE line.",
+      "Measurement without reflow: `window.__hyperframes.pretext` exposes prepare / layout / prepareWithSegments / measureLineStats / measureNaturalWidth from @chenglou/pretext, all canvas-based, so line counts and natural widths can be read at any frame without triggering layout. clearCache and setLocale are deliberately withheld because they mutate process-global state.",
+      "Fonts: 18 families are bundled and resolve by name (Inter, Montserrat, Outfit, Nunito, Oswald, League Gothic, Archivo Black, Space Mono, IBM Plex Mono, JetBrains Mono, EB Garamond, Playfair Display, Source Code Pro, Noto Sans JP, Roboto, Open Sans, Lato, Poppins). Anything else must ship an @font-face or lint fails `font_family_without_font_face`.",
+      "Font determinism: at compile time the HTML is rewritten so every resolvable family is inlined as woff2 data URIs (injectDeterministicFontFaces), with 2 fetch attempts, an 8 s per-attempt timeout, a 20 s total budget and a 250 ms jittered backoff, cached under ~/.cache/hyperframes/fonts. Capture therefore never waits on Google Fonts and cannot flash a fallback.",
+      "Per-character splitting in the catalog is hand-written vanilla JS (wrap each code point in an inline-block span), not GSAP SplitText; this is deliberate and dependency-free, and it also means the split is by code point, not grapheme cluster.",
+      "Per-word reveal recipes measured from the official films: per word blur(6px)->0 with opacity in 0.13 s, 0.067 s apart, no translate; per word grey-to-ink in 0.07-0.1 s; whole line blur 8 px->0 in 0.13-0.2 s; per letter for a name 0.1 s apart at opacity 0.3->1.",
+      "Style primitives actually used by the catalog: background sweep behind a word (an inner span with transform: scaleX(0->1), transform-origin 0 50%), karaoke pill (per-word background + colour), gradient fill (`background-clip: text` on the inner text span), stroke (`-webkit-text-stroke: 3px` plus `paint-order: stroke fill`), neon glow (layered text-shadow), RGB glitch (three offset copies + clip-path), scramble (fixed glyph rows), texture mask (background-image + background-clip: text), parallax layers (z-index split with a matte), variable-axis type (`font-variation-settings` on wght/wdth axes).",
+      "Layout safety: `npx hyperframes check` audits text against platform safe areas (`--safe-zone tiktok|reels|shorts|standard|off`, all three social zones by default on a 9:16 canvas) and against a reserved caption band (`--caption-zone \"x0=0;y0=.82;x1=1;y1=1\"` — an explicit band, the docs example being the bottom 18%), with per-element opt-outs `data-layout-allow-safe-zone`, `data-layout-allow-caption-zone`, `data-layout-bleed`, `data-layout-allow-overlap`.",
+      "Text-behind-subject compositions stack video, captions, then a background-removed cutout by z-index; `check` treats a <video> as opaque, so the cutout needs `data-layout-allow-occlusion` and the result is judged from snapshots.",
+      "Caption identity is scoped by `data-track-kind=\"captions\"` on the host element, so every caption group lands on one captions track in the browser editor instead of scattering across lanes."
+    ],
+    "technical_mechanism": "Text is ordinary DOM. During authoring (or a script step) the words are turned into spans; each group is a div with opacity 0 and visibility hidden; a single paused GSAP timeline sets visibility, tweens opacity/transform per group and per word, and hard-kills the group at its end. Chrome rasterizes the type at the composition's pixel size (1080x1920 by default, optionally supersampled through deviceScaleFactor/--scale, which forces the screenshot capture path because BeginFrame ignores DPR). Fonts are inlined as woff2 data URIs by the compiler, so the font binary is part of the composition HTML and the shasum of the render inputs; `document.fonts.load(font, text)` is the supported way to force a face used only by script-created text, and `document.fonts.ready` alone does not request an unused face. Fitting and line counting go through canvas measurement (pretext) rather than getBoundingClientRect, because reading layout mid-timeline both costs a reflow per frame and makes the value depend on when it was read.",
+    "text_and_motion_capabilities": "Typography is fully CSS-controlled: any web font (variable axes included), any OpenType feature Chrome supports, stroke, gradient fill, texture fill, shadow stacks, blend modes, clip-path and masks. Temporal control is one frame (16.67 ms at 60 fps), which is finer than any caption cue needs; per-word highlights resolve exactly on the word's start time because each tween is placed at absolute seconds. Motion detail that is documented as good practice: stagger letters one frame apart, words 60-120 ms, list items 40-80 ms; title size 4-9% of frame height; a readable line holds about 0.5 s plus 0.3 s per word; exits are 40-50% shorter than entrances. Precise limits: fitTextFontSize optimises for a single line (it reports fits:false at minFontSize rather than wrapping), splitting is per code point unless you write a grapheme-aware splitter, and there is no built-in reading-speed (CPS) gate — that check has to live in the pipeline that knows the delivery platform.",
+    "output_formats": [
+      "Any render output the CLI supports: MP4 H.264 (default), MOV, WebM VP9 with alpha (for text overlays composited elsewhere), GIF, PNG sequence.",
+      "Transparent PNG stills per caption card via `hyperframes snapshot`, useful as a contact sheet / QA artifact.",
+      "assets/transcript.json plus .srt and .vtt sidecars from `hyperframes transcribe --to srt|vtt`, reusable by other tools.",
+      "Snapshot sheets (`--against ref.mp4`) for side-by-side typography comparison against an approved reference."
+    ]
+  },
+  "api": {
+    "setup_and_install": "Node 22+ and FFmpeg are the only prerequisites; fonts and components come from the project, not from a service.\n\n```bash\nnpx hyperframes init my-reel\ncd my-reel\nnpx hyperframes add caption-highlight     # writes compositions/components/caption-highlight.html\nnpx hyperframes catalog --tag caption-style --json   # list every caption component\nnpx hyperframes transcribe assets/voice.mp3 --model small --language es --json\nnpx hyperframes check --safe-zone reels --caption-zone \"x0=0;y0=.82;x1=1;y1=1;severity=error\"\nnpx hyperframes render --fps 60 --output out/reel.mp4\n```\n\nFor a custom font, drop the file in assets/fonts and declare it in the same file that uses it:\n\n```css\n@font-face {\n  font-family: \"Inter\";\n  src: url(\"assets/fonts/Inter-Black.woff2\") format(\"woff2\");\n  font-weight: 900;\n  font-display: block;   /* never flash a fallback during capture */\n}\n```",
+    "minimal_code_example": "A complete 9:16 caption card with word-level highlight, auto-fit and a hard kill:\n\n```html\n<!doctype html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"UTF-8\" />\n    <script src=\"https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js\"></script>\n    <style>\n      @font-face { font-family: \"Inter\"; src: url(\"assets/fonts/Inter-Black.woff2\") format(\"woff2\");\n                   font-weight: 900; font-display: block; }\n      html, body { margin: 0; width: 1080px; height: 1920px; background: #06080c; overflow: hidden; }\n      #root { position: relative; width: 1080px; height: 1920px; }\n      .cap-group { position: absolute; left: 0; right: 0; top: 1445px; padding: 0 90px;\n                   text-align: center; opacity: 0; visibility: hidden; }\n      .cap-line { font-family: Inter, sans-serif; font-weight: 900; text-transform: uppercase;\n                  color: #fff; line-height: 1.02; letter-spacing: -0.01em; }\n      .w { display: inline-block; position: relative; padding: 0 .05em; margin: 0 .08em; }\n      .w .bg { position: absolute; inset: .02em -.06em .04em; background: #059669;\n               border-radius: .08em; transform: scaleX(0); transform-origin: 0 50%; z-index: -1; }\n      .w .t { position: relative; }\n    </style>\n  </head>\n  <body>\n    <div id=\"root\" data-composition-id=\"captions\" data-start=\"0\" data-duration=\"2.4\"\n         data-fps=\"60\" data-width=\"1080\" data-height=\"1920\">\n      <div id=\"cap-host\" data-track-kind=\"captions\"></div>\n    </div>\n\n    <script type=\"application/json\" id=\"words\">\n      [{\"text\":\"IPHONE\",\"start\":0.20,\"end\":0.62},{\"text\":\"14\",\"start\":0.62,\"end\":0.90},\n       {\"text\":\"FOR\",\"start\":0.90,\"end\":1.05},{\"text\":\"330\",\"start\":1.05,\"end\":1.55}]\n    </script>\n\n    <script>\n      (async function () {\n        const words = JSON.parse(document.getElementById('words').textContent);\n        const host = document.getElementById('cap-host');\n\n        // 1. load the face before measuring, or the fit is computed on fallback metrics\n        await document.fonts.load('900 78px \"Inter\"', words.map(w => w.text).join(' '));\n        const tl = gsap.timeline({ paused: true });\n\n        // 2. group 2-5 words, breaking on a sentence end or a pause >= 150 ms\n        const groups = [];\n        for (const w of words) {\n          const g = groups.at(-1);\n          const pause = g ? w.start - g.at(-1).end : 0;\n          if (!g || g.length >= 3 || pause >= 0.15 || /[.!?]$/.test(g.at(-1).text)) groups.push([w]);\n          else g.push(w);\n        }\n\n        groups.forEach(function (g, gi) {\n          const text = g.map(w => w.text).join(' ');\n          // 3. fit to ONE line inside the safe width; portrait uses maxWidth ~900 of 1080\n          const fit = window.__hyperframes.fitTextFontSize(text, {\n            maxWidth: 900, baseFontSize: 78, minFontSize: 42, fontWeight: 900,\n            fontFamily: 'Inter', step: 2,\n          });\n          if (!fit.fits) console.warn('caption needs a shorter group:', text);\n\n          const group = document.createElement('div');\n          group.className = 'cap-group';\n          group.id = 'grp-' + gi;\n          const line = document.createElement('div');\n          line.className = 'cap-line';\n          line.style.fontSize = fit.fontSize + 'px';\n\n          g.forEach(function (w) {\n            const span = document.createElement('span');\n            span.className = 'w';\n            span.innerHTML = '<span class=\"bg\"></span><span class=\"t\"></span>';\n            span.querySelector('.t').textContent = w.text;\n            line.appendChild(span);\n\n            // 4. word entrance + highlight, placed at absolute seconds\n            tl.fromTo(span, { opacity: 0, y: 18 },\n              { opacity: 1, y: 0, duration: 0.13, ease: 'power3.out' }, w.start);\n            tl.to(span.querySelector('.bg'),\n              { scaleX: 1, duration: 0.12, ease: 'power2.out' }, w.start);\n            tl.to(span.querySelector('.bg'),\n              { scaleX: 0, transformOrigin: '100% 50%', duration: 0.10, ease: 'power2.in' }, w.end);\n          });\n          host.appendChild(group);\n\n          const start = Math.max(0.1, g[0].start);   // never at exactly 0 s\n          const end = g.at(-1).end + 0.5;\n          tl.set(group, { visibility: 'visible' }, start);\n          tl.fromTo(group, { opacity: 0 }, { opacity: 1, duration: 0.10 }, start);\n          // 5. hard kill, or a stale group stays on screen\n          tl.to(group, { opacity: 0, duration: 0.12, ease: 'power2.in' }, end - 0.12);\n          tl.set(group, { opacity: 0, visibility: 'hidden' }, end);\n        });\n\n        // 6. register LAST, after every tween exists\n        window.__timelines = window.__timelines || {};\n        window.__timelines['captions'] = tl;\n      })();\n    </script>\n  </body>\n</html>\n```\n\nMeasuring instead of guessing a wrap:\n\n```js\nconst p = window.__hyperframes.pretext;\nconst prepared = p.prepare('iPhone 14 for 330 USDT', '900 78px Inter');\np.layout(prepared, 900, 78 * 1.2).lineCount;      // 1 = fits on one line\np.measureNaturalWidth(prepared);                   // unwrapped width in px\np.measureLineStats(prepared, 900, 78 * 1.2);       // { lineCount, maxLineWidth }\n```",
+    "cli_or_api_surface": [
+      "window.__hyperframes.fitTextFontSize(text, options) -> { fontSize, fits }  — single-line fit; options maxWidth, baseFontSize, minFontSize, fontWeight, fontFamily, step.",
+      "window.__hyperframes.pretext.{prepare, prepareWithSegments, layout, measureLineStats, measureNaturalWidth}  — canvas text metrics without reflow.",
+      "window.__hyperframes.getVariables()  — read data-composition-variables values once at init for copy/colour logic.",
+      "npx hyperframes transcribe <file> [--model small.en|medium.en|small] [--language es] [--json] [--to srt|vtt]  — word-level timings into assets/transcript.json.",
+      "npx hyperframes transcribe <corrected.json> --dir <project>  — replaces transcript text while keeping the caption code.",
+      "npx hyperframes add <caption-component>  /  npx hyperframes catalog --tag caption-style --json  /  --query \"<style>\" --tag motion-primitive.",
+      "npx hyperframes check --safe-zone tiktok|reels|shorts|standard|off  — text-outside-safe-area findings.",
+      "npx hyperframes check --caption-zone \"x0=0;y0=.82;x1=1;y1=1;severity=error;seek=.5,1\"  — reserved caption band audit (fractions of the canvas).",
+      "npx hyperframes keyframes --json --selector '#title'  — lists the actual per-word keyframes, eases and times for audit.",
+      "npx hyperframes snapshot --at 0.4,1.2 --zoom '#grp-0'  — crop a caption card to check clipping, stroke weight and alignment.",
+      "data-track-kind=\"captions\" on a scene host  — groups caption clips on one editor track.",
+      "data-layout-allow-caption-zone / data-layout-allow-safe-zone / data-layout-bleed / data-layout-allow-overlap / data-layout-allow-occlusion  — narrow, per-element audit opt-outs.",
+      "data-var-text=\"id\" and CSS var(--id)  — bind copy and colour from composition variables without script."
+    ],
+    "key_config_options": [
+      "fitTextFontSize.maxWidth: 1600 default in code, but 900 is the documented portrait value of a 1080-wide canvas; divide it by the emphasis scale when one word pops.",
+      "fitTextFontSize.baseFontSize 78 / minFontSize 42 / step 2 — the search walks down from 78 in 2 px steps and stops at 42 with fits:false.",
+      "fitTextFontSize.lineHeightRatio is fixed at 1.2 inside the helper; a tighter leading must be set in CSS, not in the fit call.",
+      "@font-face font-display: block — avoids a fallback flash; the compiler inlines the binary anyway, so no swap ever occurs.",
+      "Caption group size: 2-3 words (high energy), 3-5 (conversational), 4-6 (calm); break at a sentence end or a pause >= 150 ms.",
+      "Caption start: 0.1-0.3 s in, never exactly 0 s (a caption at 0 s looks pre-existing); group end = last word end + ~0.5 s.",
+      "Portrait caption anchor: the HyperFrames guide assumes 600-700 px from the bottom of 1920, while this pipeline's caption_y is a TOP anchor at 1445 px (reels_universal) and 1485 px (status_story) — about 425/385 px from the bottom for 46 px type. Position the group with top: 1445px to reproduce the existing layout, and treat the guide's numbers as a different style.",
+      "Safe zones used by `check`: reels = y 14%-65%, x 6%-94%; shorts = y 288-1248 px, x 48-888 px of 1080x1920; tiktok = y 160-840 px of 1280 with x 80-640; standard = 80% title-safe box.",
+      "Reserved caption band (`--caption-zone`): explicit fractions x0,y0,x1,y1 — the docs example is y0=0.82 to y1=1.0 (bottom 18%); severity defaults to warning and seek to 1.",
+      "data-font-family — an HTML attribute surface the font planner also reads, useful when copy comes from a CMS field.",
+      "Motion values that read as designed: per-word stagger 0.067 s (blur reveal), per-letter stagger 0.1 s, word highlight 0.12-0.15 s, exit 40-50% shorter than entrance."
+    ]
+  },
+  "integration": {
+    "pipeline_fit": "Replaces the caption burn-in stage (drawtext/ASS) and can also replace the price pill, badges and CTA card, while the beat-synced cut stays in FFmpeg. The current stack already computes the two things captions need — word timings from align_words.py and a measured beat grid from beat_grid.py — and already enforces a readability budget (quality.caption_warn_cps = 20, caption_fail_cps = 25) and a safe zone (caption_y = 1445 for reels_universal, 1485 for status_story, 46 px type). HyperFrames consumes exactly that data and gives back real kinetic typography (per-word highlight, karaoke pill, emphasis scaling) that FFmpeg's drawtext cannot express, plus a deterministic frame-by-frame render so the same sku.json always produces the same pixels. The clean split is: FFmpeg owns picture and sound, HyperFrames owns type and graphics, and the pipeline composites the overlay pass.",
+    "python_integration": "The contract is files plus one subprocess call.\n\n```python\nimport json, pathlib, re, subprocess\n\ndef write_transcript(words, project: pathlib.Path):\n    # words: [{\"id\", \"text\", \"start\", \"end\"}] from align_words.py\n    payload = [{\"id\": w[\"id\"], \"text\": w[\"text\"],\n                \"start\": round(w[\"start\"], 3), \"end\": round(w[\"end\"], 3)} for w in words]\n    (project / \"assets\").mkdir(parents=True, exist_ok=True)\n    (project / \"assets\" / \"transcript.json\").write_text(\n        json.dumps(payload, ensure_ascii=False), encoding=\"utf-8\")\n\ndef cps_gate(words, warn=20, fail=25):\n    bad = []\n    for i in range(0, len(words), 3):\n        g = words[i:i+3]\n        span = max(0.001, g[-1][\"end\"] - g[0][\"start\"])\n        cps = sum(len(w[\"text\"]) for w in g) / span\n        if cps > fail:\n            bad.append((g[0][\"start\"], round(cps, 1)))\n    return bad   # non-empty -> shorten the script, do not ship\n\ndef render_captions(project: pathlib.Path, out: pathlib.Path):\n    cmd = [\"npx\", \"--yes\", \"hyperframes@0.9.54\", \"render\",\n           \"--format\", \"webm\", \"--fps\", \"60\", \"--output\", str(out)]\n    p = subprocess.run(cmd, cwd=project, capture_output=True, text=True, timeout=1200)\n    if p.returncode != 0:\n        raise RuntimeError(p.stderr[-4000:])\n    return out\n```\n\nThe composition reads assets/transcript.json with a fetch (local file, resolved through the project server) or, simpler and safer, gets the JSON inlined into a <script type=\"application/json\"> island by Jinja. Escape it with `json.dumps(..., ensure_ascii=False).replace('</', '<\\\\/')` so a product name containing a quote or a closing tag cannot break the page. Caveats: the Node process needs a writable HOME (font cache), the first render is slower because fonts are fetched and inlined once, and `--fps` must equal the composition's data-fps or the seek grid and the encode disagree.",
+    "data_injection": "Copy and colour go through composition variables; timings go through a JSON island. Declare <html data-composition-variables='[{\"id\":\"price\",\"type\":\"string\",\"default\":\"$330\"}]'>, bind with data-var-text=\"price\" or CSS var(--price), and set per-mount values with data-variable-values='{...}'. For the timeline, write the words array into <script type=\"application/json\" id=\"words\"> at build time and parse it in the composition — that keeps the GSAP script static and reviewable while the data varies per SKU. The three values that must agree across systems are: the composition's data-duration (28.0 s), data-fps (60, matching the render flag), and the last word's end time (the caption hard kill must land before the root duration).",
+    "footage_and_asset_handling": "Product footage is not touched: the overlay render carries only type and graphics on a transparent background, and FFmpeg composites it over the cut picture, so the existing beat-synced edit, the −14 LUFS mix and the WhatsApp guardrail stay exactly as they are. Fonts are the one asset that must move into the HyperFrames project: either a bundled family (no file needed) or a woff2 in assets/fonts with its @font-face in the same file. Voiceover is used only to derive timings (transcribe or align_words.py); the audio itself stays in the FFmpeg mix, so there is no double audio path. Images, badges and SVG marks are local project assets and are inlined or served by the project's own file server — remote URLs are downloaded first, never fetched during capture.",
+    "migration_effort": "medium",
+    "integration_steps": [
+      "Pick one SKU and build a single caption-only composition: 1080x1920, data-fps 60, data-duration equal to the voiceover, one caption host with data-track-kind=\"captions\".",
+      "Generate assets/transcript.json from the existing align_words.py output (id, text, start, end) and confirm the words line up with the voice by rendering snapshots at three timestamps.",
+      "Port the current caption style: 46 px equivalent, uppercase, emerald #059669 highlight, anchored at the project's caption_y 1445 as a top offset rather than the guide's 600-700 px-from-bottom default; verify with `check --safe-zone reels --caption-zone`.",
+      "Add the CPS gate in Python before the render (reuse quality.caption_fail_cps = 25) so a too-dense group fails in seconds instead of after a full render.",
+      "Render the caption pass as transparent WebM, composite in FFmpeg over the existing cut, and diff against the current burn-in frames to confirm position, weight and highlight timing.",
+      "Extend the same composition to the price pill, badges and CTA once captions are stable — they share the same timeline and font stack.",
+      "Add a determinism check to CI: two renders of the same project must produce identical frame hashes at 0.0/14.0/27.9 s."
+    ]
+  },
+  "constraints": {
+    "requirements": [
+      "Node.js 22+ and FFmpeg for the CLI; no Python package is required.",
+      "A woff2 file per non-bundled family, declared with @font-face in the file that uses it, or lint fails before the render.",
+      "Chrome/Chromium with the emoji font installed if emoji are used — a bare headless container may render tofu instead of colour emoji. [uncertain] exact font package required.",
+      "Composition root must declare data-width, data-height, data-fps and a data-duration that covers the last caption's hard kill."
+    ],
+    "limitations": [
+      "fitTextFontSize optimises a single line: it returns fits:false at minFontSize rather than wrapping, so multi-line captions must be authored as explicit lines (or measured with pretext.measureLineStats).",
+      "pretext measures with a canvas, so it only works in the browser (prepare needs a real font + canvas); it cannot be used in Node to pre-compute fits without a browser.",
+      "The catalog's character splitter uses Array.from(text), i.e. code points: emoji ZWJ sequences, flags, skin-tone modifiers and combining accents split into fragments. GSAP SplitText (free since 3.13, with aria-label/aria-hidden and grapheme-aware handling) is the safer splitter when emoji or Devanagari/Arabic text is in scope.",
+      "GSAP SplitText is not used anywhere in the HyperFrames runtime or catalog, so its autoSplit/onSplit re-splitting behaviour is unproven inside a seeked timeline; re-splitting mid-render would invalidate the timeline's targets.",
+      "Bundled files carry Latin cuts at 400/700/900 only; other weights and scripts (including CJK through Noto Sans JP) are fetched from Google Fonts at compile time and inlined as data URIs, so a full CJK face inflates the composition HTML substantially. `font-feature-settings` is fine, but `text-wrap: balance` and `hyphens` interact badly with per-word splitting (`text-wrap: balance` is explicitly called out as breaking splits).",
+      "RTL/bidi is not handled anywhere in the caption tooling: groups are ordered left-to-right by array position, `fitTextFontSize` measures a single string, and there is no `dir` awareness in the catalog components. Arabic/Hebrew captions need custom work. [uncertain]",
+      "Variable-font animation only works with a font file that actually carries the axis; the bundled families ship static 400/700/900 cuts, so `wght`/`wdth` morphing needs a variable file added to the project.",
+      "Text on a transparent background (needed for overlay compositing) is antialiased in grayscale, not with LCD subpixel AA, because subpixel AA requires an opaque backdrop; fine strokes look thinner than in a browser over white.",
+      "`background-clip: text` and gradient fills must live on the inner text span, never on the transformed container, or the fill and the transform fight and the gradient clips to the wrong box.",
+      "`-webkit-text-stroke` is non-standard (Chrome-only, which is acceptable here) and always draws centred on the glyph outline, so a thick stroke eats the letterform; pair it with `paint-order: stroke fill`.",
+      "Text shadows, neon glow stacks and blur filters are per-frame raster work: a 40 px glow on 6 words costs more than the type itself, and several overlapping backdrop-filter blurs can dominate render time.",
+      "There is no built-in reading-speed (CPS) or minimum-hold lint. HyperFrames checks geometry (safe zones, caption band, overflow, overlap) but not how fast the words go by; the pipeline must keep its own caption_audit gate.",
+      "A caption that starts at exactly 0 s is flagged in the guidance as looking pre-existing, and a group without an explicit hard kill stays visible for the rest of the composition.",
+      "`check` treats any <video> as opaque across its box, so caption-behind-subject compositions report text_occluded until the cutout is marked data-layout-allow-occlusion and judged by snapshot.",
+      "Burned-in subtitles already present in source footage cannot be detected or removed by the caption layer; they must be found by a 1 fps contact-sheet scan first."
+    ],
+    "known_issues": [
+      "Lint `font_family_without_font_face` fires for any family that is neither bundled nor declared, and `font_face_local_only` warns when an @font-face uses local() only — that font will be missing in a cloud render.",
+      "Catalog caption components ship as fixed demos: an 8 s timeline, 1920x1080 sizing and a placeholder word list, so they must be re-authored for 1080x1920 and the real narration.",
+      "The caption-highlight demo links Google Fonts over the network; in a capture that link is a FOIT/latency risk unless the compiler inlines the family (it does for the 18 bundled ones).",
+      "Groups hidden with `visibility: hidden` still occupy space in a flex column, so the next group lands lower; position groups absolutely.",
+      "In a stacked (accumulating) caption block, groups must share one exit time or the stack reflows mid-sentence.",
+      "Fading both the group and its words multiplies the opacities and reads as a pop; fade one level only.",
+      "The documented `--caption-zone` example covers only the bottom 18% (y0=0.82) while this pipeline's caption row starts at 1445/1920 = 75.3% from the top, so auditing with that band leaves the real caption row unguarded; pass an explicit y0 (for example 0.68) for this layout."
+    ],
+    "performance_and_cost": "Type itself is cheap: a caption group is a handful of spans with transform/opacity tweens, and text rasterization on a 1080x1920 canvas is a few milliseconds. The expensive text-adjacent work is filters (neon glow, blur, texture fills), background removal for text-behind-subject (documented at about 2 fps at 1080p on CPU with a 168 MB first-run model download), and font plumbing (one compile-time fetch per non-bundled family, cached in ~/.cache/hyperframes). [uncertain] Per-frame milliseconds for a 46 px caption layer on this machine are unmeasured; the cost that matters in practice is render wall time, which is dominated by seek + capture, not by the text.",
+    "licensing": "HyperFrames and its catalog are Apache-2.0, so the caption components are editable source you can ship commercially. Bundled fonts are Fontsource packages under the SIL Open Font License, which permits embedding and commercial use. GSAP (if SplitText or CustomEase is used) is free for commercial use under Webflow's standard no-charge license since 3.13, with the sole restriction of not building a competing no-code animation builder. [uncertain] Individual catalog pages state no per-block license, so attribution requirements for a block copied into a client template are unconfirmed."
+  },
+  "evidence": {
+    "confidence": 0.83,
+    "sources": [
+      {
+        "url": "https://hyperframes.heygen.com/catalog/components/caption-highlight",
+        "note": "Full editable source of a real caption component: word/group data model, canvas measureText fit (80 px base, 1620 px max width), scaleX background sweep, brightness pop, visibility sets."
+      },
+      {
+        "url": "https://hyperframes.heygen.com/catalog/components/bottom-up-letters",
+        "note": "The catalog's character splitter: Array.from(text) per code point, inline-block spans, CSS custom properties driven by composition variables, GSAP stagger recipe."
+      },
+      {
+        "url": "https://github.com/heygen-com/hyperframes/blob/main/skills/hyperframes/references/captions.md",
+        "note": "The caption contract: word timing shape, transcribe models, group sizes, hard-kill pattern, fitTextFontSize usage and portrait maxWidth, portrait/landscape baselines, blend-mode thresholds, text-behind-speaker coverage rules."
+      },
+      {
+        "url": "https://github.com/heygen-com/hyperframes/blob/main/skills/hyperframes/references/format.md",
+        "note": "Bundled font list, Google Fonts fallback fetch and cache, @font-face lint rules, font_face_local_only warning, data-track-kind, layout audit opt-outs."
+      },
+      {
+        "url": "https://hyperframes.heygen.com/prompting/captions-catalog",
+        "note": "Taxonomy of 16 caption components plus text-effect components, tone mapping, and the explicit failure modes (stacking effects, mixing styles, caption names that do not exist)."
+      },
+      {
+        "url": "https://hyperframes.heygen.com/guides/captions-and-recuts",
+        "note": "Rail vs embed model, cut-before-caption rule, per-word emphasis via inline `emphasis`, and the transcribe-a-corrected-transcript workflow."
+      },
+      {
+        "url": "https://hyperframes.heygen.com/guides/gsap-animation",
+        "note": "Load-fonts-before-measuring-text pattern with document.fonts.load(font, text), and why registering a timeline before an async build renders blank."
+      },
+      {
+        "url": "https://www.npmjs.com/package/@hyperframes/core",
+        "note": "Read dist/text/* (fitTextFontSize defaults, pretext surface and its deliberate omissions) and dist/fonts/deterministicFonts.js (18 canonical families, Fontsource packages, retry policy, data-URI inlining)."
+      },
+      {
+        "url": "https://hyperframes.heygen.com/reference/html-schema",
+        "note": "data-composition-variables / data-var-text binding contract and the root duration rules that govern caption length."
+      },
+      {
+        "url": "https://gsap.com/docs/v3/Plugins/SplitText",
+        "note": "SplitText capabilities and limits (aria handling, autoSplit, mask, no SVG <text>, avoid text-wrap: balance) used to judge it as an alternative splitter."
+      }
+    ],
+    "open_questions": [
+      "Which exact font package supplies colour emoji in the render image, and whether `check`'s contrast pass accounts for emoji glyphs.",
+      "Whether an RTL/Arabic caption is viable at all without writing a custom splitter and group order — no code path in the catalog or core handles bidi.",
+      "The real CPS ceiling for 46 px uppercase Inter on a 1080-wide WhatsApp Status view; the project's 25 CPS gate is a design choice, not a measured legibility limit.",
+      "Whether SplitText's autoSplit can be used safely inside a seeked timeline (a re-split would change the DOM the timeline targets).",
+      "Measured cost of neon glow / texture-mask captions at 60 fps versus plain type, to decide how often those styles can ship in a 28 s reel.",
+      "Whether the compiler inlines a variable font's full axis range or pins the used instances, which decides if wght morphing survives the compile step."
+    ]
+  },
+  "uncertain": [
+    "performance_and_cost",
+    "licensing"
+  ]
+}
