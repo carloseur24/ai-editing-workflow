@@ -1,0 +1,37 @@
+{
+  "sku": "demo_iphone14_blue",
+  "hyperframes": "0.9.54",
+  "overlay": {
+    "file": "spikes/hyperframes_overlay/overlay.webm",
+    "codec": "vp9",
+    "pix_fmt": "yuv420p",
+    "frames": 180,
+    "bytes": 498293,
+    "render_sec": 0.0,
+    "sec_per_frame": 0.0,
+    "alpha_mode": "1",
+    "alpha_mean": 0.0392,
+    "alpha_corner": 0,
+    "ink_coverage": 0.037,
+    "size": "1080x1920"
+  },
+  "composite": {
+    "file": "spikes/hyperframes_overlay/spike_composited.mp4",
+    "bytes": 2823086,
+    "composite_sec": 10.56,
+    "frames": 180,
+    "pill_rgb": [
+      2,
+      149,
+      104
+    ],
+    "pill_distance_to_059669": 3.3
+  },
+  "cards": [
+    "UN IPHONE 14",
+    "POR 330 DÓLARES",
+    "EN MARACAY",
+    "TE MUESTRO EXACTAMENTE"
+  ],
+  "total_sec": 29.5
+}
