@@ -67,7 +67,7 @@ SKILLS = {
 }
 
 GATES = {
-    "edit": ["validate (pre-render)", "sfx (cue sheet)", "qa --strict (30 checks)",
+    "edit": ["validate (pre-render)", "sfx (cue sheet)", "qa --strict (31 checks)",
              "finish (deliver + prune)"],
     "hybrid": ["validate", "sfx (cue sheet)", "render plate + composite",
                "qa --strict", "finish"],
