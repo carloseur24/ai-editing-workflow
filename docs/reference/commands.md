@@ -44,7 +44,7 @@ and works from any working directory. An editable install
 
 `motion`, `track`, `comp`, `fx`, `grade`, `scopes` and `longform` are post/
 assembly modes: they validate their spec and write their own evidence, but the
-30-check `qa` gate is edit-render specific. Check the manifest/points/stats and
+31-check `qa` gate is edit-render specific. Check the manifest/points/stats and
 `ffprobe`, then watch the result. `tts` is the one source-writing stage. Full
 field tables: [specs.md](specs.md).
 
