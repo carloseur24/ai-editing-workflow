@@ -33,7 +33,7 @@ deliver**. Facts come from tools; taste comes from the conversation.
    contact sheet, no eval regression. For a motion plate: spec validation, a
    reviewed still, and ffprobe (codec, size, duration, alpha when requested).
    For `comp`, `grade` and `longform`: spec validation, manifest written,
-   ffprobe matches, and the result was watched — they have no 30-check QA gate.
+   ffprobe matches, and the result was watched — they have no 31-check QA gate.
 8. **No commits or external writes unless the user asked in this turn.**
 
 ## Production line
@@ -256,3 +256,4 @@ result to the delivery shelf and Downloads.
 - **Config keys:** [docs/reference/config.md](docs/reference/config.md)
 - **QA gates:** [docs/reference/qa-gates.md](docs/reference/qa-gates.md)
 - **Troubleshooting:** [docs/troubleshooting.md](docs/troubleshooting.md)
+- **Subtitle sync (ASR → timed captions):** [docs/agent/subtitle-sync.md](docs/agent/subtitle-sync.md)
