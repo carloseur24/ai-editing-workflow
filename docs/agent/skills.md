@@ -26,7 +26,7 @@ and pixels. This page is the honest capability map.
 | Color | `fenix grade` | LUT, primaries, temperature, shot matching, keyed secondaries |
 | Scopes | `fenix scopes` | histogram, vectorscope, waveform, signal stats |
 | Long-form | `fenix longform` | chapters, xfade set, multicam angle switching, J/L audio offset |
-| QA | `fenix qa --strict` | 30 checks (32 with overlay) |
+| QA | `fenix qa --strict` | 31 checks (33 with overlay) |
 | Regression | `fenix eval` | metrics + SSIM against a baseline |
 | Delivery | `fenix finish` | QA → delivery shelf + Downloads → prune local |
 | One-shot chain | `fenix make` | mtime + config slices → render/remix → QA → finish |
