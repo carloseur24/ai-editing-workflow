@@ -123,7 +123,7 @@ generated file lives at the repo root. Full map:
 | `fenix longform <project>` | 10 s–5 min | chapters, xfade, multicam, J/L offset |
 | `fenix render <sku>` | ~3 min | new timestamped run |
 | `fenix render <sku> --remix` | ~13 s | rebuild audio into a new run |
-| `fenix qa --latest <sku> --strict` | 30 s | 30-check delivery gate |
+| `fenix qa --latest <sku> --strict` | 30 s | 31-check delivery gate |
 | `fenix eval <sku> --skip-align --skip-render` | 30 s | regression vs baseline |
 | `fenix finish <project>` | 40 s | QA → delivery shelf → prune local |
 | `fenix make <project>` | full chain | stale stages → render/remix → QA → finish |
@@ -166,7 +166,7 @@ output/<sku>/
 ```
 
 `motion`, `comp`, `fx`, `grade` and `longform` write their own `<run>/` folders
-but are not indexed in `runs.json` and are not covered by the 30-check QA gate;
+but are not indexed in `runs.json` and are not covered by the 31-check QA gate;
 each writes a manifest and validates its spec. `track` writes one JSON,
 `scopes` writes one QC folder. See [artifacts.md](docs/agent/artifacts.md).
 
@@ -187,7 +187,7 @@ canonical; the delivery folder is a shelf outside the repo.
 - [Creative contract](docs/agent/creative.md) — story shape, phonetics, safe zones.
 - [Growing the project](docs/agent/growth.md) — where new code belongs.
 - [Config reference](docs/reference/config.md) — every block in `pipeline.json`.
-- [QA gates](docs/reference/qa-gates.md) — the 30 checks and their fixes.
+- [QA gates](docs/reference/qa-gates.md) — the 31 checks and their fixes.
 - [Troubleshooting](docs/troubleshooting.md) — symptom → fix.
 
 ## Why v4

@@ -56,6 +56,7 @@ what it actually touches.
 | `shots` | `source_tolerance_sec`, `sum_tolerance_sec` | storyboard, plan, job | ordered `story.shots` validation: source overrun slack and how far the shot sum may drift from `duration_sec` |
 | `script` | `spoken_wpm`, `max_tempo`, `target_sec` (optional; falls back to `target_duration_sec`) | lint | word budget and pacing ceiling |
 | `quality` | `in_point_floor`, `beat_offset_warn_ms`, `beat_offset_fail_ms`, `caption_warn_cps`, `caption_fail_cps`, `max_duration_sec`, `beat_policy`, `bpm_tolerance` | validate, render, QA, beats | content and timing floors; `beat_policy` (`music` default / `picture`) and the requested-vs-measured BPM tolerance |
+| `qa` | `speech_coverage.min_dbfs_offset`, `min_sustain_s`, `max_uncovered_s`, `gate`, `band_hz` | QA | speech-outside-captions gate: dB added to the calibrated floor, shortest flagged run, budget, strict opt-in and the speech band; absent keys use the code defaults |
 | `punch` | `enabled`, `duration_sec`, `scale`, `ease` | render | punch-in on every cut; `ease` is reserved (renderer currently uses out-cubic) |
 | `transitions` | `enabled`, `default`, `sec` | render | pre-roll picture blend into each cut: `default` kind (`dissolve`, `fadeblack`, `wipeleft`…), length `sec` clamped to half the shorter shot; off by default; `--transition`/`--no-transition` override one render |
 | `post` | `motion`, `comp` | `make --post comp`, `job` | project-owned post choice (defaults `true`); `motion:false` skips the plate, `comp:false` skips the whole post chain (comp, post QA and post delivery) and leaves the edit master as the product — the dry-run's `deliver` row is SKIP, and edit delivery stays a separate `make`/`finish` |
@@ -89,6 +90,11 @@ what it actually touches.
 | `quality.max_duration_sec` | 33.5 | hard duration ceiling; the brief and voice tail set the target |
 | `quality.beat_policy` | `music` | `music` gates cut-to-beat distance; `picture` reports it as info (cinematic long takes, action cuts) |
 | `quality.bpm_tolerance` | 1.5 | `fenix beats` warns when the measured BPM drifts more than this percent from the requested BPM |
+| `qa.speech_coverage.max_uncovered_s` | 1.0 | budget for speech outside every caption cue (`e_speech_coverage`) |
+| `qa.speech_coverage.gate` | `false` | opt in: `--strict` fails on that budget; otherwise the row is `warn` (`info` under `--strict`) and never blocks |
+| `qa.speech_coverage.min_sustain_s` | 0.8 | shortest loud run that counts as a gap, so a consonant or a swell never fires |
+| `qa.speech_coverage.min_dbfs_offset` | 0 | dB added to the floor calibrated on captioned windows (0 = use the measured floor) |
+| `qa.speech_coverage.band_hz` | `[300, 3000]` | band-limited RMS that decides "speech" |
 | `audio.limiter_ceiling` | 0.78 | −2.16 dBFS limiter ceiling; leaves room for inter-sample true peaks under the −1.0 dBTP gate |
 | `voiceover.max_tempo` | 1.30 | hard atempo cap |
 | `voiceover.tail_pad_sec` | 11.176 | silence used to fill the tail; tune it to the target duration |

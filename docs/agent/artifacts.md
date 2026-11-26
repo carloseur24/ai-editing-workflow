@@ -129,7 +129,7 @@ These are **not** edit runs and are not indexed in `runs.json`. Most validate
 their spec and write a manifest; `track` writes only tracking JSON, `scopes`
 writes QC stills + stats, and `tts` writes a source voice file. `motion`,
 `comp`, `fx`, `grade` and `longform` accept `--deliver` to copy the result and
-manifest to the delivery shelf and Downloads. There is no 30-check QA gate; check
+manifest to the delivery shelf and Downloads. There is no 31-check QA gate; check
 the manifest/ffprobe, then watch the result.
 
 | Path | Written by | Contents |

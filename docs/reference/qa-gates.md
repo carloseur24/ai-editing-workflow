@@ -11,7 +11,7 @@ the report to the local run when it exists, else to
              "ok": true, "severity": "error", "fix": "..."}]}
 ```
 
-The good run has **30 base checks** plus one `w_layout` row per render-time
+The good run has **31 base checks** plus one `w_layout` row per render-time
 layout warning. `--strict` makes every warning a failure; delivery requires it.
 `fenix finish` reuses a strict PASS for the same video bytes (size + mtime
 fingerprint); `--re-qa` forces a fresh pass.
@@ -68,7 +68,7 @@ the delivered evidence shows exactly which sound design the master used.
 ## Post-master QA profile — `fenix qa --post`
 
 A comp/fx/grade master has already consumed the edit plan, the voiceover and the
-captions, so the 30-check edit gate no longer applies. `fenix qa --post
+captions, so the 31-check edit gate no longer applies. `fenix qa --post
 <comp-run>` (or `--post --latest <sku>`) runs 19 post-master rows and writes
 `qa_report.json` into the comp run (local, never the shelf):
 
@@ -92,7 +92,7 @@ before delivering; a comp master cannot bypass the edit gate.
 ## Post-production gates
 
 `fenix motion`, `fenix track`, `fenix comp`, `fenix fx`, `fenix grade`,
-`fenix scopes` and `fenix longform` do **not** run the 30-check edit QA.
+`fenix scopes` and `fenix longform` do **not** run the 31-check edit QA.
 `motion`/`comp`/`fx`/`grade`/`longform` validate their spec before encoding and
 write `manifest.json`; `track` writes points; `scopes` writes QC stills/stats.
 `fenix tts` has no gate beyond a successful provider response and a playable
@@ -141,7 +141,22 @@ action (cinematic long takes, documentary, physical comedy).
 | `c_caption_text` | error | non-empty, ≤ 29 chars, no Unicode check | fix `display_map`/`display_merge` |
 | `c_caption_zone` | error | ≤ 885 px wide, font ≥ 24 px | shorten the copy or widen the zone deliberately |
 | `c_caption_dupes` | warn | 0 repeated consecutive cards | fix chunking |
+| `e_speech_coverage` | warn | ≤ 1.0 s of speech outside every cue | extend the cue or re-run `fenix align` |
 | `a_music_only` | info | VO/script/caption rows skipped for a music-only piece | not a failure; see `skipped_checks` |
+
+`e_speech_coverage` is measured on the master, not on the transcript. A
+transcript-based check once validated captions against their own word timings
+and shipped 32.20 s of speech outside every cue while reporting "0 failures":
+the transcript moves with the bug. This gate band-limits the decoded mix to
+300–3000 Hz and calibrates its floor on the 25th percentile of the windows a
+cue already covers, so it measures *this* project's voice. An absolute floor
+cannot work — on a 1430 s file with a music bed, 91 % of 0.5 s windows sat above
+−40 dBFS (median −28.5), so "above −40 = speech" flags the bed, while a floor
+20 dB under the captioned speech leaves it alone. A gap is a run of at least
+`min_sustain_s` seconds, so a consonant or a swell never fires; fewer than 20
+captioned windows reports `not enough captioned audio to calibrate` as `info`.
+The row is a `warn` in a normal run and never fails one; `--strict` reports it
+as `info` unless `qa.speech_coverage.gate = true`, which makes it an `error`.
 
 ## HyperFrames overlay (only with `render --hf-overlay`)
 
@@ -151,7 +166,7 @@ action (cinematic long takes, documentary, physical comedy).
 | `o_pill_colour` | error | max channel Δ ≤ 12 vs `colors.emerald_primary` | composite in RGB; never force a second colour matrix |
 
 These two rows are added only for overlay runs, so a native render still reports
-the documented 30 checks.
+the documented 31 checks.
 
 ## Render warnings
 

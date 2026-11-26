@@ -10,6 +10,7 @@ Checks the things that actually break a WhatsApp/Reels delivery:
   * integrated loudness / true peak
   * no black or near-black frames at sampled timestamps
   * captions present in the word timings
+  * captions covering the speech in the mix, calibrated on the captioned audio
   * content: each rendered cut correlated against its planned source frame,
     caption text / width / duplicates, whole-shot and in-point sharpness
   * per-run bookkeeping: the video must live in a timestamped run directory
@@ -44,8 +45,12 @@ from ..domain.voice import explicit_duration, is_music_only
 VO_CHECK_IDS = {
     "c_timings", "d_script_match", "d_tail_complete",
     "c_cps_max", "c_cps_fail", "c_caption_text", "c_caption_zone",
-    "c_caption_dupes", "c_caption_audit",
+    "c_caption_dupes", "c_caption_audit", "e_speech_coverage",
 }
+
+# audio_metrics() decodes the master to f32le at this rate, 2 channels; the
+# speech band and the window grid below both assume it.
+AUDIO_SR = 48000
 
 
 def strip_vo_checks(checks: list[dict], music_only: bool
@@ -91,7 +96,7 @@ def audio_metrics(path: Path) -> tuple[float, float, np.ndarray]:
         "-filter_complex",
         "[0:a]asplit=2[ln][pcm];[ln]loudnorm=print_format=json[lo];[pcm]anull[po]",
         "-map", "[lo]", "-f", "null", "-",
-        "-map", "[po]", "-f", "f32le", "-ac", "2", "-ar", "48000", "-",
+        "-map", "[po]", "-f", "f32le", "-ac", "2", "-ar", str(AUDIO_SR), "-",
     ], capture_output=True)
     text = proc.stderr.decode("utf-8", "replace")
     try:
@@ -100,6 +105,117 @@ def audio_metrics(path: Path) -> tuple[float, float, np.ndarray]:
         raise RuntimeError(f"could not measure audio:\n{text[-600:]}") from exc
     pcm = np.frombuffer(proc.stdout, dtype=np.float32)
     return float(meas["input_i"]), float(meas["input_tp"]), pcm
+
+
+def _timecode(seconds: float) -> str:
+    """mm:ss.hh — the shape a cue and a log line both read."""
+    minutes, rest = divmod(max(0.0, float(seconds)), 60.0)
+    return f"{int(minutes):02d}:{rest:05.2f}"
+
+
+def speech_coverage(pcm: np.ndarray, sr: int,
+                    cues: list[tuple[float, float]], cfg: dict) -> dict:
+    """Speech-band audio that no caption cue covers, measured on the mix.
+
+    A transcript cannot prove what a master says. A one-off job validated
+    captions against their own word timings and shipped 32.20 s of speech
+    outside every cue while reporting "0 failures": the transcript moved with
+    the bug. So this judges loudness in the decoded audio instead, using the
+    PCM ``audio_metrics`` already returned (no second decode).
+
+    A window counts as speech when its 300-3000 Hz RMS clears a floor
+    calibrated on the windows a cue already covers (their 25th percentile).
+    An absolute floor cannot work: on a 1430 s file with a music bed 91 % of
+    0.5 s windows sat above -40 dBFS (median -28.5), so "above -40 = speech"
+    flags the bed. Calibrating on the captioned audio puts the floor where
+    this project's voice lives, whatever its loudness.
+
+    ``pcm`` is mono (callers downmix the decoded stereo first) and ``cues``
+    are (start, end) seconds, the span a card is on screen. Returns windows,
+    covered_windows, the calibrated speech_floor_db, the worst gaps (sorted
+    by duration, at most 20), the total uncovered_s and ``skipped`` when
+    there is not enough captioned audio to calibrate. ``ok`` is the budget
+    verdict the QA row reports.
+    """
+    scfg = (cfg.get("qa") or {}).get("speech_coverage") or {}
+    band = [float(v) for v in (scfg.get("band_hz") or (300.0, 3000.0))]
+    offset = float(scfg.get("min_dbfs_offset", 0.0))
+    sustain = float(scfg.get("min_sustain_s", 0.8))
+    budget = float(scfg.get("max_uncovered_s", 1.0))
+    win_s, hop_s = 0.5, 0.25
+    win, hop = max(1, round(win_s * sr)), max(1, round(hop_s * sr))
+    x = np.asarray(pcm, dtype=np.float64)
+    if x.ndim == 2:
+        x = x.mean(axis=1)
+    out = {"windows": 0, "covered_windows": 0, "speech_floor_db": None,
+           "gaps": [], "uncovered_s": 0.0, "skipped": None, "ok": True}
+    if x.size < win:
+        out["skipped"] = "no decoded audio to measure"
+        return out
+
+    from scipy.signal import butter, sosfilt
+
+    hi = min(band[1], 0.45 * sr)
+    sos = butter(4, [band[0] / (sr / 2.0), hi / (sr / 2.0)], btype="band",
+                 output="sos")
+    # Filter in 10 s blocks carrying the state: the output stays continuous
+    # and only one extra full-length float array is allocated.
+    banded = np.empty_like(x)
+    zi = np.zeros((sos.shape[0], 2))
+    step = max(win, sr * 10)
+    for start in range(0, x.size, step):
+        block = x[start:start + step]
+        banded[start:start + block.size], zi = sosfilt(sos, block, zi=zi)
+
+    starts = np.arange(0, x.size - win + 1, hop)
+    dbs = []
+    for s in starts:
+        seg = banded[s:s + win]
+        rms = float(np.sqrt(np.mean(seg * seg)))
+        dbs.append(20.0 * np.log10(max(rms, 1e-10)))     # -200 dBFS floor
+
+    covered = []
+    spans = [tuple(sorted((float(a), float(b)))) for a, b in cues]
+    for s in starts:
+        t0, t1 = s / sr, (s + win) / sr
+        overlap = 0.0
+        for c0, c1 in spans:
+            overlap += max(0.0, min(t1, c1) - max(t0, c0))
+        covered.append(overlap >= win_s / 2.0 - 1e-9)
+
+    seen = [db for db, cov in zip(dbs, covered) if cov]
+    out["windows"] = len(dbs)
+    out["covered_windows"] = len(seen)
+    if len(seen) < 20:
+        out["skipped"] = "not enough captioned audio to calibrate"
+        return out
+    floor = float(np.percentile(seen, 25)) + offset
+    out["speech_floor_db"] = floor
+
+    gaps: list[dict] = []
+    run: list[int] = []
+
+    def flush(indices: list[int]) -> dict:
+        return {"start": round(float(starts[indices[0]]) / sr, 2),
+                "end": round(float(starts[indices[-1]] + win) / sr, 2),
+                "db": round(float(np.mean([dbs[i] for i in indices])), 2)}
+
+    for index, (db, cov) in enumerate(zip(dbs, covered)):
+        if not cov and db >= floor - 1e-9:
+            run.append(index)
+        elif run:
+            gaps.append(flush(run))
+            run = []
+    if run:
+        gaps.append(flush(run))
+
+    # A run shorter than min_sustain_s is a consonant or a swell, not a line.
+    gaps = [g for g in gaps if g["end"] - g["start"] >= sustain - 1e-9]
+    out["uncovered_s"] = round(sum(g["end"] - g["start"] for g in gaps), 2)
+    out["gaps"] = sorted(gaps, key=lambda g: g["end"] - g["start"],
+                         reverse=True)[:20]
+    out["ok"] = out["uncovered_s"] <= budget
+    return out
 
 
 def has_faststart(path: Path) -> bool:
@@ -181,7 +297,7 @@ def _read_json(path: Path) -> dict:
 
 
 def post_report(video: Path, cfg: dict, *, strict: bool = False) -> dict:
-    """Post-master profile: a comp/fx/grade master, not the 30-check edit gate.
+    """Post-master profile: a comp/fx/grade master, not the 31-check edit gate.
 
     The edit gate judges the cut list, the voiceover and the captions; a
     post-master no longer has those inputs (the base is an encoded run). This
@@ -796,6 +912,39 @@ def main(argv: list[str] | None = None) -> None:
         check("c_cps_max", False, "missing caption_audit.json",
               "caption audit present", "re-render: fenix render writes it",
               "warn")
+
+    # ---- captions must cover the speech actually in the mix --------------
+    # The cue list is the same caption_audit.json the c_caption_* rows read
+    # (t0/t1 = the span a card is on screen) and the audio is the PCM the
+    # loudness gate already decoded. Never the transcript: it cannot prove
+    # what the master says (32 s of speech once shipped uncaptioned).
+    if not music_only:
+        cues_json = _read_json(video.parent / "caption_audit.json")
+        cues = [(float(c["t0"]), float(c["t1"]))
+                for c in cues_json.get("cards") or []
+                if c.get("t0") is not None and c.get("t1") is not None]
+        scfg = (cfg.get("qa") or {}).get("speech_coverage") or {}
+        budget = float(scfg.get("max_uncovered_s", 1.0))
+        stereo = pcm[:pcm.size - pcm.size % 2].reshape(-1, 2)
+        cover = speech_coverage(stereo.mean(axis=1), AUDIO_SR, cues, cfg)
+        if cover["skipped"]:
+            check("e_speech_coverage", True, cover["skipped"],
+                  ">= 20 captioned windows to calibrate",
+                  "captions must exist before coverage is calibrated", "info")
+        else:
+            gaps = cover["gaps"]
+            worst = gaps[0] if gaps else None
+            fix = (f"speech at {_timecode(worst['start'])}–"
+                   f"{_timecode(worst['end'])} has no caption: extend the "
+                   f"cue or re-run fenix align") if worst else ""
+            # warn today so no existing piece starts failing; --strict turns
+            # it into an error only when the project opts in with gate = true.
+            severity = ("error"
+                        if args.strict and bool(scfg.get("gate", False))
+                        else ("info" if args.strict else "warn"))
+            check("e_speech_coverage", cover["ok"],
+                  f"{cover['uncovered_s']:.2f}s uncaptioned speech in "
+                  f"{len(gaps)} gap(s)", f"<= {budget:.1f}s", fix, severity)
 
     # ---- HyperFrames text layer: alpha transport + brand colour ---------
     # Only present on `render --hf-overlay` runs, so native runs keep the

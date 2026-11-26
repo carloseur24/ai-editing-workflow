@@ -269,7 +269,7 @@ Accept: `longform/manifest.json` duration equals the sum of chapter out−in
 `transition`/`transition_sec` when a cut needs an `xfade`.
 
 Full field tables: [specs.md](../reference/specs.md). These commands have no
-30-check QA gate; the acceptance evidence is the manifest + ffprobe + your review.
+31-check QA gate; the acceptance evidence is the manifest + ffprobe + your review.
 
 ## Failure protocol
 
@@ -302,7 +302,7 @@ For **fx**: spec valid, manifest written, seeds fixed, affected frames watched.
 For **comp / grade / longform**: spec valid, manifest written, `ffprobe`
 matches, and the result was watched. For a comp master also run
 `qa --post --latest <sku>` (container, duration, audio, black frames, size,
-cut identity); it has no 30-check edit gate.
+cut identity); it has no 31-check edit gate.
 For **scopes**: the PNGs and `signalstats` were read; no deliver step.
 
 ## Delegation and context

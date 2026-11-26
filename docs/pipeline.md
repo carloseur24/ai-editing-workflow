@@ -387,7 +387,7 @@ no per-chapter audio, transcript-driven selection or multicam audio mixing yet.
 
 ## 7. QA gate
 
-30 checks across container, audio, duration, edit, content and bookkeeping. See
+31 checks across container, audio, duration, edit, content and bookkeeping. See
 [reference/qa-gates.md](reference/qa-gates.md). `--strict` treats warnings as
 failures and is required for delivery. A music-only master is still checked for
 duration, loudness, peak, black frames, size and shot identity; the
